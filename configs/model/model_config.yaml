@@ -1,4 +1,1 @@
-embd_dim: 512
-num_harmonics: 12
-is_attention_resample: True
-encoder_type: "metaformer"
+embd_dim: 128

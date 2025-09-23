@@ -2,16 +2,14 @@ import torch
 import yaml
 import numpy as np
 import cv2
-import os
-import sys
 import time
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+from scripts.common import bootstrap_project_root, get_device
+
+# Ensure project root imports (model/, data/, etc.) work reliably
+bootstrap_project_root()
 
 from model.utils import (
-    reconstruct_removed_hw,
     reconstruct_angle_linear,
     reconstruct_angle_sr,
 )
@@ -21,15 +19,15 @@ from model.reconstruction import extract_slices, reconstruct_volume, save_volume
 EVERY_X_SLICES = 1
 
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    device = get_device()
     print(f"--------------------------------")
     print(f"Loading config file...")
 
     with open("configs/model/model_config.yaml") as f:
         model_cfg = yaml.safe_load(f)
 
-    with open(f"configs/model/{model_cfg['encoder_type']}_config.yaml") as f:
+    # RDN encoder/decoder configs
+    with open("configs/model/encoder.yaml") as f:
         encoder_cfg = yaml.safe_load(f)
 
     with open("configs/model/decoder_config.yaml") as f:
@@ -69,8 +67,6 @@ if __name__ == "__main__":
 
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
-        encoder_type=model_cfg["encoder_type"],
-        is_attention_resample=model_cfg["is_attention_resample"],
         encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
     ).to(device)
@@ -183,14 +179,10 @@ if __name__ == "__main__":
             model,
             slices_THW=slices_lr,  # (T,H,W)
             angles_deg_T=angles_lr,  # (T,)
-            arc_deg=arc_deg,
-            stride_deg=stride_deg,
             target_step_deg=target_step_deg,
+            zero_one=zero_one,
             patch_size=patch_size,
             stride_hw=stride,
-            zero_one=zero_one,
-            angle_norm=angle_norm,
-            reconstruct_removed_hw_fn=reconstruct_removed_hw,
         )
         end_time = time.time()
         print(f"SR inference time: {end_time - start_time} seconds")

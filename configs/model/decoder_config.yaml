@@ -1,3 +1,6 @@
-zero_one: False
-decoder_depth: 8
-decoder_hidden_size: 512
+in_channels: 128
+out_channels: 128
+num_features: 64
+growth_rate: 64
+num_blocks: 8
+num_layers: 3

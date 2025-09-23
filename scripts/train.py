@@ -1,5 +1,4 @@
 import os
-import sys
 import time
 
 import numpy as np
@@ -9,18 +8,24 @@ import yaml
 import wandb
 from torch.amp import autocast
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+from scripts.common import bootstrap_project_root, get_device
+
+# Ensure project root imports (model/, data/, etc.) work reliably
+bootstrap_project_root()
 
 from data.data import build_train_dataloader, build_val_dataloader
 from model.model import ProjectI
-from model.utils import reconstruct_angle_sr, reconstruct_removed_hw, PSNR, SSIM_slicewise
+from model.utils import (
+    reconstruct_angle_sr,
+    reconstruct_removed_hw,
+    PSNR,
+    SSIM_slicewise,
+)
 from model.reconstruction import extract_slices, reconstruct_volume
 
 
 def loss_fn(out, full_slices):
-    return F.l1_loss(out, full_slices)
+    return F.mse_loss(out, full_slices)
 
 
 # Add this comprehensive monitoring function
@@ -48,8 +53,7 @@ def monitor_training_step(model, optimizer, step, log_frequency):
 
 
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    device = get_device()
     print(f"--------------------------------")
     print(f"Loading configs file...")
 
@@ -59,7 +63,8 @@ if __name__ == "__main__":
     with open("configs/model/model_config.yaml") as f:
         model_cfg = yaml.safe_load(f)
 
-    with open(f"configs/model/{model_cfg['encoder_type']}_config.yaml") as f:
+    # RDN encoder/decoder configs
+    with open("configs/model/encoder.yaml") as f:
         encoder_cfg = yaml.safe_load(f)
 
     with open("configs/model/decoder_config.yaml") as f:
@@ -83,8 +88,6 @@ if __name__ == "__main__":
     max_halves = train_cfg["max_halves"]
     gradient_accumulation_steps = train_cfg["gradient_accumulation_steps"]
     warmup_steps = train_cfg["warmup_steps"]
-    cyclic_ratio_max = train_cfg["cyclic_ratio_max"]
-    cyclic_ratio_warmup_steps = train_cfg["cyclic_ratio_warmup_steps"]
     num_epochs = train_cfg["num_epochs"]
     max_grad_norm = train_cfg["max_grad_norm"]
     if max_grad_norm <= 0:
@@ -125,8 +128,6 @@ if __name__ == "__main__":
 
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
-        encoder_type=model_cfg["encoder_type"],
-        is_attention_resample=model_cfg["is_attention_resample"],
         encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
     ).to(device)
@@ -203,7 +204,8 @@ if __name__ == "__main__":
 
     print(f"Beginning training...")
 
-    cyclic_ratio = 0.0
+    inp_idx = [0, 2]
+    gt_idx = [1]
 
     for epoch in range(start_epoch, num_epochs):
         start_time = time.time()
@@ -211,58 +213,26 @@ if __name__ == "__main__":
         model.train()
 
         running_train_loss = 0.0
-        running_l1_loss = 0.0
-        running_cyclic_loss = 0.0
         micro_count = 0
 
         # Epoch-level accumulators (per optimizer update)
         epoch_train_loss_sum = 0.0
-        epoch_train_l1_sum = 0.0
-        epoch_train_cyclic_sum = 0.0
-        epoch_train_update_count = 0
 
         # Consolidated end-of-epoch logging payload
         end_of_epoch_log = {}
 
-        for i, (
-            input_slices,
-            input_angles,
-            removed_slices,
-            removed_angles,
-            full_slices,
-            full_angles,
-        ) in enumerate(train_loader):
-            input_slices = input_slices.squeeze(0).to(device)
-            input_angles = input_angles.squeeze(0).to(device)
-            removed_slices = removed_slices.squeeze(0).to(device)
-            removed_angles = removed_angles.squeeze(0).to(device)
-            full_slices = full_slices.squeeze(0).to(device)
-            full_angles = full_angles.squeeze(0).to(device)
+        for i, (slices, angle) in enumerate(train_loader):
+            slices = slices.to(device)
+            angle = angle.to(device)
 
             # Only zero gradients at the start of accumulation cycle
             if i % gradient_accumulation_steps == 0:
                 optimizer.zero_grad()
 
             with autocast(device_type="cuda", dtype=dtype):
-                out, cyclic_out = model(
-                    input_slices, input_angles, full_angles, is_train=True
-                )
+                out = model(slices[inp_idx], angle)
 
-            l1_loss = loss_fn(out, full_slices)
-            cyclic_loss = loss_fn(cyclic_out, input_slices)
-            # with torch.autocast(device_type="cuda", dtype=dtype):
-            #     out, cyclic_out = model(
-            #         input_slices, input_angles, removed_angles, is_train=True
-            #     )
-            
-            # l1_loss = loss_fn(out, removed_slices)
-            # cyclic_loss = loss_fn(cyclic_out, input_slices)
-
-
-            running_l1_loss += l1_loss.item()
-            running_cyclic_loss += cyclic_loss.item()
-
-            loss = (1 - cyclic_ratio) * l1_loss + cyclic_ratio * cyclic_loss
+            loss = loss_fn(out, slices[gt_idx])
 
             running_train_loss += loss.item()
 
@@ -304,26 +274,15 @@ if __name__ == "__main__":
                 group_count = max(1, micro_count)
                 train_log = {
                     "train/loss": running_train_loss / group_count,
-                    "train/l1_loss": running_l1_loss / group_count,
-                    "train/cyclic_loss": running_cyclic_loss / group_count,
                     "train/grad_norm_total": grad_norm.item(),
                     "train/step": actual_step,
                     "train/learning_rate": optimizer.param_groups[0]["lr"],
-                    "train/cyclic_ratio": cyclic_ratio,
                 }
                 train_log.update(step_metrics)
                 wandb.log(train_log, step=actual_step)
 
-                # Update epoch-level accumulators
-                epoch_train_loss_sum += train_log["train/loss"]
-                epoch_train_l1_sum += train_log["train/l1_loss"]
-                epoch_train_cyclic_sum += train_log["train/cyclic_loss"]
-                epoch_train_update_count += 1
-
                 # Reset group accumulators
                 running_train_loss = 0.0
-                running_l1_loss = 0.0
-                running_cyclic_loss = 0.0
                 micro_count = 0
 
         if (epoch + 1) % val_frequency == 0 or epoch == 0:
@@ -335,24 +294,11 @@ if __name__ == "__main__":
             SSIM_total = 0.0
 
             with torch.no_grad():
-                for (
-                    input_slices,
-                    input_angles,
-                    query_slices,
-                    query_angles,
-                    full_slices,
-                    full_angles,
-                ) in val_loader:
-                    input_slices = input_slices.squeeze(0).to(device)
-                    input_angles = input_angles.squeeze(0).to(device)
-                    query_slices = query_slices.squeeze(0).to(device)
-                    query_angles = query_angles.squeeze(0).to(device)
-                    full_slices = full_slices.squeeze(0).to(device)
-                    full_angles = full_angles.squeeze(0).to(device)
+                for (slices, angle) in val_loader:
+                    slices = slices.to(device)
+                    angle = angle.to(device)
 
-                    out, _ = model(
-                        input_slices, input_angles, full_angles, is_train=False
-                    )
+                    out = model(slices, angle)
 
                     loss = loss_fn(out, full_slices)
                     PSNR_total += PSNR(out, full_slices, zero_one=zero_one)
@@ -377,9 +323,6 @@ if __name__ == "__main__":
 
             # Clear any cached GPU memory used during validation tiling
             torch.cuda.empty_cache()
-            epoch_avg_train_loss = epoch_train_loss_sum / max(
-                1, epoch_train_update_count
-            )
             print(
                 f"Epoch {epoch + 1}: avg_train_loss: {epoch_avg_train_loss}, avg_val_loss: {avg_val_loss}"
             )
@@ -438,14 +381,10 @@ if __name__ == "__main__":
                     model,
                     slices_THW=slices,  # (T,H,W)
                     angles_deg_T=angles,  # (T,)
-                    zero_one=zero_one,
-                    angle_norm=angle_norm,
-                    arc_deg=arc_deg,
-                    stride_deg=stride_deg,
                     target_step_deg=target_step_deg,
+                    zero_one=zero_one,
                     patch_size=patch_size,
                     stride_hw=stride,
-                    reconstruct_removed_hw_fn=reconstruct_removed_hw,
                 )
                 for sr_angle, sr_slices in zip(grid_deg, pred_uniform):
                     reconstructed_slices[sr_angle.item()] = {

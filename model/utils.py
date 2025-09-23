@@ -179,17 +179,6 @@ def reconstruct_removed_hw(
     return pred_sum / w_sum.clamp_min(1e-8)  # (T_rem, H, W)
 
 
-def _gaussian1d(n, sigma_scale=0.25):
-    if n <= 1:
-        return torch.ones(n, dtype=torch.float32)
-    sigma = max(1e-6, n * sigma_scale)
-    x = np.arange(n, dtype=np.float32)
-    c = (n - 1) / 2.0
-    w = np.exp(-((x - c) ** 2) / (2 * sigma**2))
-    w /= w.max()
-    return torch.from_numpy(w.astype(np.float32))
-
-
 def reconstruct_angle_linear(
     slices_THW,
     angles_deg_T,
@@ -235,22 +224,25 @@ def reconstruct_angle_sr(
     model,
     slices_THW,  # (T,H,W) or (1,T,H,W)
     angles_deg_T,  # (T,)   or (1,T)
-    zero_one=False,
-    angle_norm=3,
-    arc_deg=15.0,
-    stride_deg=8.0,
     target_step_deg=1.0,
+    zero_one=False,
     angle_min=None,  # if None -> use data min
     angle_max=None,  # if None -> use data max
-    patch_size=(56, 56),
-    stride_hw=(48, 48),
-    angle_sigma_scale=0.25,
-    min_keep_per_win=2,
-    reconstruct_removed_hw_fn=None,
+    patch_size=None,  # int or (ph,pw); if None, no tiling
+    stride_hw=None,  # int or (sy,sx); if None and patch_size set, defaults to patch_size (no overlap)
+    sigma_scale=0.125,
 ):
-    assert (
-        reconstruct_removed_hw_fn is not None
-    ), "Pass reconstruct_removed_hw via reconstruct_removed_hw_fn"
+    """
+    Super-resolve along angle using a pairwise model:
+      - For each adjacent measured pair (a_k, a_{k+1}), generate predictions at
+        uniform query angles g in that interval with step ``target_step_deg``.
+      - The model is called with two slices [prev, next] and a relative angle r in [0,1].
+      - The final output is a uniform grid over [angle_min, angle_max] including endpoints.
+
+    Returns:
+      pred_uniform: [N,H,W] tensor in the same normalization ([-1,1] or [0,1])
+      grid_deg:     [N] tensor of degrees corresponding to pred_uniform slices
+    """
     device = next(model.parameters()).device
 
     # Accept (1,T,...) or (T,...)
@@ -259,108 +251,163 @@ def reconstruct_angle_sr(
     if angles_deg_T.dim() == 2 and angles_deg_T.shape[0] == 1:
         angles_deg_T = angles_deg_T[0]
 
-    slices = slices_THW.to(device).float().contiguous()  # (T,H,W)
+    x_all = slices_THW.to(device).float().contiguous()  # (T,H,W)
+    a_all = angles_deg_T.to(device).float().contiguous()  # (T,)
+    assert x_all.dim() == 3 and a_all.dim() == 1 and a_all.numel() == x_all.shape[0]
 
+    # Normalize slices
     if zero_one:
-        slices = slices.float() / 255.0
+        x_all = x_all / 255.0
     else:
-        slices = slices.float() / 255.0 * 2.0 - 1.0
+        x_all = x_all / 255.0 * 2.0 - 1.0
 
-    angles = angles_deg_T.to(device).float().contiguous()  # (T,)
-    assert slices.dim() == 3 and angles.dim() == 1 and angles.numel() == slices.shape[0]
+    # Sort by absolute angle
+    a_all, perm = torch.sort(a_all)
+    x_all = x_all[perm]
+    T, H, W = x_all.shape
 
-    # Sort by angle
-    angles, perm = torch.sort(angles)  # (T,)
-    slices = slices[perm]  # (T,H,W)
-    T, H, W = slices.shape
+    # Determine target range and grid
+    data_min = float(a_all.min().item())
+    data_max = float(a_all.max().item())
+    amin = data_min if angle_min is None else float(angle_min)
+    amax = data_max if angle_max is None else float(angle_max)
+    if not (amin < amax):
+        raise ValueError(f"angle_min ({amin}) must be < angle_max ({amax})")
 
-    # Determine target range from data if not provided
-    data_min = float(angles.min().item())
-    data_max = float(angles.max().item())
-    angle_min = data_min if angle_min is None else float(angle_min)
-    angle_max = data_max if angle_max is None else float(angle_max)
+    steps = max(1, int(round((amax - amin) / float(target_step_deg))))
+    grid_deg = amin + torch.arange(steps + 1, device=device, dtype=torch.float32) * float(
+        target_step_deg
+    )  # [N]
+    N = int(grid_deg.numel())
 
-    if not (angle_min < angle_max):
-        raise ValueError(f"angle_min ({angle_min}) must be < angle_max ({angle_max})")
+    # Allocate output grid and (shared) patch weights if tiling
+    pred_uniform = torch.zeros((N, H, W), dtype=torch.float32, device=device)
 
-    # Build uniform grid over [amin, amax]
-    # Ensure we include the endpoint if it lands exactly on the grid
-    steps = max(1, int(round((angle_max - angle_min) / target_step_deg)))
-    grid_deg = (
-        angle_min
-        + torch.arange(steps + 1, device=device, dtype=torch.float32) * target_step_deg
-    )
-    N = grid_deg.numel()
+    do_tiling = patch_size is not None
+    if do_tiling:
+        if isinstance(patch_size, int):
+            ph = pw = int(patch_size)
+        else:
+            ph, pw = int(patch_size[0]), int(patch_size[1])
+        if isinstance(stride_hw, int) or stride_hw is None:
+            sy = sx = int(stride_hw if stride_hw is not None else ph)
+        else:
+            sy, sx = int(stride_hw[0]), int(stride_hw[1])
+        assert ph <= H and pw <= W, f"patch_size {(ph,pw)} must fit {(H,W)}"
 
-    pred_sum = torch.zeros((N, H, W), dtype=torch.float32, device=device)
-    w_sum = torch.zeros((N,), dtype=torch.float32, device=device)
+        w_patch = _gaussian2d(ph, pw, sigma_scale).to(device)  # (ph,pw)
 
-    # Window starts; ensure last touches end
-    if arc_deg <= 0 or stride_deg <= 0:
-        raise ValueError("arc_deg and stride_deg must be > 0")
+        # Tiling grid (cover end)
+        ys = list(range(0, max(1, H - ph + 1), max(1, sy)))
+        if not ys or ys[-1] + ph < H:
+            ys.append(max(0, H - ph))
+        xs = list(range(0, max(1, W - pw + 1), max(1, sx)))
+        if not xs or xs[-1] + pw < W:
+            xs.append(max(0, W - pw))
 
-    num_windows = max(
-        1, int(np.floor((angle_max - angle_min - arc_deg) / stride_deg)) + 1
-    )
-    window_starts = (
-        angle_min
-        + torch.arange(num_windows, device=device, dtype=torch.float32) * stride_deg
-    )
-    if window_starts.numel() == 0 or window_starts[-1] + arc_deg < angle_max - 1e-6:
-        window_starts = torch.cat(
-            [window_starts, torch.tensor([angle_max - arc_deg], device=device)]
-        )
+    # Iterate adjacent pairs
+    for k in range(T - 1):
+        a0 = float(a_all[k].item())
+        a1 = float(a_all[k + 1].item())
+        if not (a1 > a0 + 1e-8):
+            continue  # skip degenerate/duplicate
 
-    for window_start in window_starts:
-        window_end = window_start + arc_deg
+        x0 = x_all[k]  # [H,W]
+        x1 = x_all[k + 1]  # [H,W]
 
-        # Measured slices inside [ws, we)
-        keep_mask = (angles >= window_start) & (angles < window_end)
-        Ti = int(keep_mask.sum().item())
-        if Ti < min_keep_per_win:
+        # Determine which grid points lie in this interval
+        # For all but the last pair: [a0, a1); for the last pair include right end.
+        include_right = (k == T - 2)
+        left_idx = int(np.ceil((max(a0, amin) - amin) / float(target_step_deg)))
+        right_idx = int(np.floor((min(a1, amax) - amin) / float(target_step_deg)))
+        if not include_right and right_idx >= left_idx:
+            # drop right endpoint if exactly on grid to avoid duplication
+            r_exact = abs((a1 - amin) / float(target_step_deg) - round((a1 - amin) / float(target_step_deg))) < 1e-8
+            if r_exact:
+                right_idx -= 1
+
+        left_idx = max(0, min(left_idx, N - 1))
+        right_idx = max(-1, min(right_idx, N - 1))
+        if right_idx < left_idx:
             continue
 
-        kept_slices = slices[keep_mask]  # (Ti,H,W)
-        kept_angles = angles[keep_mask]  # (Ti,)
+        # Generate predictions for each grid index in this pair
+        for gi in range(left_idx, right_idx + 1):
+            g = float(amin + gi * float(target_step_deg))
 
-        # Target angles from global grid within [ws, we] (inclusive end if aligned)
-        query_mask = (grid_deg >= window_start) & (grid_deg <= window_end + 1e-6)
-        if not torch.any(query_mask):
-            continue
-        query_angles = grid_deg[query_mask]  # (Q,)
-        Q = query_angles.numel()
+            # If exactly at measured endpoints, copy them
+            if abs(g - a0) < 1e-8:
+                if do_tiling:
+                    # Assemble from x0 via weighted patches
+                    pred_sum = torch.zeros((H, W), dtype=torch.float32, device=device)
+                    w_sum = torch.zeros((H, W), dtype=torch.float32, device=device)
+                    for y0_ in ys:
+                        for x0_ in xs:
+                            patch = x0[y0_ : y0_ + ph, x0_ : x0_ + pw]
+                            pred_sum[y0_ : y0_ + ph, x0_ : x0_ + pw] += patch * w_patch
+                            w_sum[y0_ : y0_ + ph, x0_ : x0_ + pw] += w_patch
+                    pred_uniform[gi] = pred_sum / w_sum.clamp_min(1e-8)
+                else:
+                    pred_uniform[gi] = x0
+                continue
+            if abs(g - a1) < 1e-8:
+                if do_tiling:
+                    pred_sum = torch.zeros((H, W), dtype=torch.float32, device=device)
+                    w_sum = torch.zeros((H, W), dtype=torch.float32, device=device)
+                    for y0_ in ys:
+                        for x0_ in xs:
+                            patch = x1[y0_ : y0_ + ph, x0_ : x0_ + pw]
+                            pred_sum[y0_ : y0_ + ph, x0_ : x0_ + pw] += patch * w_patch
+                            w_sum[y0_ : y0_ + ph, x0_ : x0_ + pw] += w_patch
+                    pred_uniform[gi] = pred_sum / w_sum.clamp_min(1e-8)
+                else:
+                    pred_uniform[gi] = x1
+                continue
 
-        # normalize angles within window
-        min_angle = float(kept_angles.min().item())
-        max_angle = min_angle + arc_deg
-        assert max_angle >= float(
-            kept_angles.max().item()
-        ), f"arc_deg is too small: min_angle: {min_angle}, max_angle: {max_angle}, kept_angles.max(): {kept_angles.max()}"
-        kept_angles = (kept_angles - min_angle) / (
-            max_angle - min_angle
-        ) * np.pi / (angle_norm/2) - np.pi / angle_norm
-        query_angles = (query_angles - min_angle) / (
-            max_angle - min_angle
-        ) * np.pi / (angle_norm/2) - np.pi / angle_norm
+            # Relative position in (0,1)
+            rel = (g - a0) / (a1 - a0)
+            rel_t = torch.tensor([rel], dtype=torch.float32, device=device)
 
-        # Spatial tiling per window → (Q,H,W)
-        pred_RHW = reconstruct_removed_hw_fn(
-            model=model,
-            kept_slices=kept_slices,
-            kept_angles_deg=kept_angles,
-            target_angles_deg=query_angles,
-            patch_size=patch_size,
-            stride=stride_hw,
-            sigma_scale=0.125,
-        )  # (R,H,W)
+            if do_tiling:
+                pred_sum = torch.zeros((H, W), dtype=torch.float32, device=device)
+                w_sum = torch.zeros((H, W), dtype=torch.float32, device=device)
+                for y0_ in ys:
+                    for x0_ in xs:
+                        patch0 = x0[y0_ : y0_ + ph, x0_ : x0_ + pw]
+                        patch1 = x1[y0_ : y0_ + ph, x0_ : x0_ + pw]
+                        pair = torch.stack([patch0, patch1], dim=0)  # [2,ph,pw]
+                        y = model(pair, rel_t)
+                        # Normalize output shape to [ph,pw]
+                        if isinstance(y, (tuple, list)):
+                            y = y[0]
+                        if y.dim() == 2:
+                            y_hw = y
+                        elif y.dim() == 3:
+                            y_hw = y[0]
+                        elif y.dim() == 4:
+                            y_hw = y[0, 0]
+                        else:
+                            raise RuntimeError(
+                                f"Unexpected model output shape: {tuple(y.shape)}"
+                            )
+                        pred_sum[y0_ : y0_ + ph, x0_ : x0_ + pw] += y_hw * w_patch
+                        w_sum[y0_ : y0_ + ph, x0_ : x0_ + pw] += w_patch
+                pred_uniform[gi] = pred_sum / w_sum.clamp_min(1e-8)
+            else:
+                pair_full = torch.stack([x0, x1], dim=0)  # [2,H,W]
+                y = model(pair_full, rel_t)
+                if isinstance(y, (tuple, list)):
+                    y = y[0]
+                if y.dim() == 2:
+                    y_hw = y
+                elif y.dim() == 3:
+                    y_hw = y[0]
+                elif y.dim() == 4:
+                    y_hw = y[0, 0]
+                else:
+                    raise RuntimeError(f"Unexpected model output shape: {tuple(y.shape)}")
+                pred_uniform[gi] = y_hw
 
-        # Angle-domain blending within window
-        w_ang = _gaussian1d(Q, sigma_scale=angle_sigma_scale).to(device)  # (R,)
-        g_idx = torch.nonzero(query_mask, as_tuple=False).squeeze(1)  # (R,)
-        pred_sum[g_idx] += pred_RHW * w_ang[:, None, None]
-        w_sum[g_idx] += w_ang
-
-    pred_uniform = pred_sum / w_sum.clamp_min(1e-8)[:, None, None]  # (N,H,W)
     return pred_uniform, grid_deg
 
 def PSNR(x, y, zero_one=False):

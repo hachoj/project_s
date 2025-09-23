@@ -5,9 +5,10 @@ import yaml
 import SimpleITK as sitk
 from typing import Sequence, Union
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+from scripts.common import bootstrap_project_root, get_device
+
+# Ensure project root imports (model/, data/, etc.) work reliably
+bootstrap_project_root()
 
 from model.model import ProjectI
 from model.utils import (
@@ -117,8 +118,7 @@ def save_three_niftis_from_patch(
 
 
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    device = get_device()
     print(f"--------------------------------")
     print(f"Loading config file...")
     cfg = yaml.safe_load(open("configs/patch_inference_config.yaml"))
@@ -207,12 +207,8 @@ if __name__ == "__main__":
                 model,
                 slices_THW=slices_t,
                 angles_deg_T=angles_t,
-                arc_deg=arc_deg,
-                stride_deg=stride_deg,
                 target_step_deg=float(sampled_step_deg),
-                patch_size=patch_size,
-                stride_hw=stride,
-                reconstruct_removed_hw_fn=reconstruct_removed_hw,
+                zero_one=True,
             )
         sr_u8 = _to_uint8(pred_uniform.cpu().numpy())  # [N,H,W]
         img_smpl = sitk.GetImageFromArray(sr_u8)

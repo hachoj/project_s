@@ -1,27 +1,19 @@
-import os
-import sys
-import time
-
-import numpy as np
 import torch
 import torch.nn.functional as F
 import yaml
-import wandb
-from torch.amp import autocast
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+from scripts.common import bootstrap_project_root, get_device
 
-from data.data import build_train_dataloader, build_val_dataloader
+# Ensure project root imports (model/, data/, etc.) work reliably
+bootstrap_project_root()
+
+from data.data import build_val_dataloader
 from model.model import ProjectI
-from model.utils import reconstruct_angle_sr, reconstruct_removed_hw, PSNR, SSIM_slicewise, angle_aware_resample
-from model.reconstruction import extract_slices, reconstruct_volume
+from model.utils import PSNR, SSIM_slicewise, angle_aware_resample
 
 
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    device = get_device()
     print(f"--------------------------------")
     print(f"Loading configs file...")
 
@@ -31,14 +23,12 @@ if __name__ == "__main__":
     with open("configs/model/model_config.yaml") as f:
         model_cfg = yaml.safe_load(f)
 
-    with open(f"configs/model/{model_cfg['encoder_type']}_config.yaml") as f:
+    # RDN encoder/decoder configs
+    with open("configs/model/encoder.yaml") as f:
         encoder_cfg = yaml.safe_load(f)
 
     with open("configs/model/decoder_config.yaml") as f:
         decoder_cfg = yaml.safe_load(f)
-
-    with open("configs/train/train_data_config.yaml") as f:
-        train_data_cfg = yaml.safe_load(f)
 
     with open("configs/train/val_data_config.yaml") as f:
         val_data_cfg = yaml.safe_load(f)
@@ -46,16 +36,7 @@ if __name__ == "__main__":
     # paths
     resume_path = eval_cfg.get("model_resume_path", None)
 
-    dtype = (
-        torch.bfloat16
-        if eval_cfg.get("dtype", "bfloat16") == "bfloat16"
-        else torch.float16
-    )
-
     zero_one = eval_cfg.get("zero_one", False)
-
-    # Minimal resume support: single path or None
-    start_epoch = 0
 
     print(f"Config file loaded successfully")
     print(f"--------------------------------")
@@ -69,8 +50,6 @@ if __name__ == "__main__":
 
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
-        encoder_type=model_cfg["encoder_type"],
-        is_attention_resample=model_cfg["is_attention_resample"],
         encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
     ).to(device)
