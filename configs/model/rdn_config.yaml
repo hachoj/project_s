@@ -1,0 +1,6 @@
+in_channels: 1
+out_channels: 128
+num_features: 64
+growth_rate: 64
+num_blocks: 8
+num_layers: 3

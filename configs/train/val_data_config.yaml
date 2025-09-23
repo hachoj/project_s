@@ -1,0 +1,8 @@
+data_dir: "/home/chojnowski.h/weishao/chojnowski.h/project_i/data/datasets/val"
+patch_size: [64, 64]
+desired_angle_difference: 1.4
+zero_one: False
+angle_norm: 3  # 3 for [-pi/3, pi/3], 8 for [-pi/8, pi/8]
+arc_size: 20
+num_workers: 12
+pin_memory: True 

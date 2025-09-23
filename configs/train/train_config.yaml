@@ -1,0 +1,25 @@
+checkpoint_save_dir: "checkpoints/MASSIVE"
+model_resume_path: "checkpoints/MASSIVE/checkpoint_epoch_80.pt"
+dtype: "bfloat16"
+
+# training params
+save_frequency: 8  # (epochs)
+val_frequency: 4  # (epochs)
+reconstruction_frequency: 8  # (epochs)
+log_frequency: 10  # (steps)
+lr: 0.0003
+max_halves: 4
+gradient_accumulation_steps: 32
+cyclic_ratio_max: 0.4
+cyclic_ratio_warmup_steps: 20000
+max_grad_norm: 3.0
+
+patience: 8
+warmup_steps: 400
+num_epochs: 1000  # CHANGE BASED ON DATASET SIZE
+
+# reconstruction params
+image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF066"
+stride: [56, 56]
+stride_deg: 5
+target_step_deg: 0.5

@@ -1,0 +1,5 @@
+model_resume_path: "checkpoints/MASSIVE/checkpoint_epoch_80.pt"
+
+stride: [56, 56]
+stride_deg: 5
+target_step_deg: 0.5

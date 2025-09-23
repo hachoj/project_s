@@ -1,0 +1,8 @@
+wandb
+data/datasets
+data/inference
+.vscode
+logs
+checkpoints/
+*.log
+__pycache__

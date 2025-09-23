@@ -1,0 +1,9 @@
+in_channels: 1
+out_channels: 512
+dim: 512
+depth: 6
+pool_size: 1
+num_heads: 4
+mlp_ratio: 2.0
+stem_type: "simple"
+patch_size: [64, 64]
