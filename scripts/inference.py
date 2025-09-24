@@ -1,7 +1,6 @@
 import torch
 import yaml
 import numpy as np
-import cv2
 import time
 
 import sys
@@ -14,6 +13,7 @@ if PROJECT_ROOT not in sys.path:
 from model.utils import (
     reconstruct_angle_linear,
     reconstruct_angle_sr,
+    reconstruct_angle_sr_multipass,
 )
 from model.model import ProjectI
 from model.reconstruction import extract_slices, reconstruct_volume, save_volume
@@ -45,19 +45,13 @@ if __name__ == "__main__":
 
     patch_size = model_cfg["patch_size"]
     stride = model_cfg["stride"]
+    zero_one = bool(model_cfg.get("zero_one", False))  # model expects inputs in [-1,1] if zero_one=False
 
     # reconstruction params
     target_step_deg = inference_cfg["target_step_deg"]
 
-    # augmentation params
-    gaussian_noise_mean = inference_cfg.get("gaussian_noise_mean", 0.0)
-    gaussian_noise_std = inference_cfg.get("gaussian_noise_std", 0.0)
-    gaussian_noise_scale = inference_cfg.get("gaussian_noise_scale", 1.0)
-
-    zero_one = inference_cfg.get("zero_one", False)
-    # model expects inputs in [-1,1] if zero_one=False
-
     just_sr = inference_cfg.get("just_sr", False)
+    multipass = inference_cfg.get("multipass", False)
 
     print(f"Config file loaded successfully")
     print(f"--------------------------------")
@@ -68,6 +62,8 @@ if __name__ == "__main__":
         encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
     ).to(device)
+
+    model = torch.compile(model)
 
     model.load_state_dict(torch.load(model_path)["model_state"])
 
@@ -173,15 +169,26 @@ if __name__ == "__main__":
 
         print(f"Starting SR inference...")
         start_time = time.time()
-        pred_uniform, grid_deg = reconstruct_angle_sr(
-            model,
-            slices_THW=slices_lr,  # (T,H,W)
-            angles_deg_T=angles_lr,  # (T,)
-            target_step_deg=target_step_deg,
-            zero_one=zero_one,
-            patch_size=patch_size,
-            stride_hw=stride,
-        )
+        if multipass:
+            pred_uniform, grid_deg = reconstruct_angle_sr_multipass(
+                model,
+                slices_THW=slices_lr,  # (T,H,W)
+                angles_deg_T=angles_lr,  # (T,)
+                target_step_deg=target_step_deg,
+                zero_one=zero_one,
+                patch_size=patch_size,
+                stride_hw=stride,
+            )
+        else:
+            pred_uniform, grid_deg = reconstruct_angle_sr(
+                model,
+                slices_THW=slices_lr,  # (T,H,W)
+                angles_deg_T=angles_lr,  # (T,)
+                target_step_deg=target_step_deg,
+                zero_one=zero_one,
+                patch_size=patch_size,
+                stride_hw=stride,
+            )
         end_time = time.time()
         print(f"SR inference time: {end_time - start_time} seconds")
 
@@ -194,21 +201,6 @@ if __name__ == "__main__":
                 .numpy()
                 .astype(np.uint8)
             )
-            if gaussian_noise_std and gaussian_noise_std > 0.0:
-                noise = np.random.normal(
-                    loc=gaussian_noise_mean,
-                    scale=gaussian_noise_std,
-                    size=(
-                        int(slice_np.shape[0] // gaussian_noise_scale),
-                        int(slice_np.shape[1] // gaussian_noise_scale),
-                    ),
-                )
-                noise = cv2.resize(
-                    noise,
-                    (slice_np.shape[1], slice_np.shape[0]),
-                    interpolation=cv2.INTER_NEAREST,
-                )
-                slice_np = slice_np + noise
             slice_np = np.clip(slice_np, 0, 255).astype(np.uint8)
             reconstructed_slices[sr_angle.item()] = {
                 "angle": sr_angle.item(),
@@ -223,11 +215,10 @@ if __name__ == "__main__":
             reconstructed_volume,
             save_path
             + patient_name
-            + "_inference_"
+            + "_inf_"
             + str(target_step_deg)
-            + "stp"
-            + str(patch_size[0])
-            + "ptch"
+            + "_stp_"
+            + "multipass_" if multipass else "single_"
             + str(EVERY_X_SLICES)
             + "slices",
         )

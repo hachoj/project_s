@@ -1,4 +1,4 @@
-checkpoint_save_dir: "checkpoints/newest"
+checkpoint_save_dir: "checkpoints/mse"
 model_resume_path: None
 dtype: "bfloat16"
 
@@ -18,4 +18,4 @@ num_epochs: 2000  # CHANGE BASED ON DATASET SIZE
 
 # reconstruction params
 image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF066"
-target_step_deg: 0.5
+target_step_deg: 0.25

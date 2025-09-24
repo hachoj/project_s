@@ -99,6 +99,13 @@ def process_patient(
                     angle=np.float32(relative_angle),
                     angles=np.array([previous_angle, angles[i], next_angle], dtype=np.float32),
                 )
+                np.savez(
+                    path.replace(".npz", "_rev.npz"),
+                    slices=slices[::-1],
+                    angle=np.float32(1.0 - relative_angle),
+                    angles=np.array([-1*next_angle, -1*angles[i], -1*previous_angle], dtype=np.float32),
+                )
+
                 previous_angle = angles[i]
                 next_angle = angles[i+2]
                 i += 1

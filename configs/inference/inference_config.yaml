@@ -1,10 +1,9 @@
 # paths
-model_path: "checkpoints/MASSIVE/checkpoint_epoch_80.pt"
+model_path: "checkpoints/mse/checkpoint_epoch_200.pt"
 image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF093"
-save_path: "data/inference/MASSIVE/"
+save_path: "data/inference/mse/"
 
 target_step_deg: 0.5
 
-zero_one: False
-
 just_sr: True
+multipass: True

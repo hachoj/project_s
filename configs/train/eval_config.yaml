@@ -1,3 +1,1 @@
-model_resume_path: "checkpoints/MASSIVE/checkpoint_epoch_80.pt"
-
-target_step_deg: 0.5
+model_resume_path: "checkpoints/mse/checkpoint_epoch_200.pt"

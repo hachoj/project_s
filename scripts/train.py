@@ -106,7 +106,7 @@ if __name__ == "__main__":
     patch_size = model_cfg["patch_size"]
     stride = model_cfg["stride"]
 
-    zero_one = train_cfg.get("zero_one", False)
+    zero_one = bool(model_cfg.get("zero_one", False))
 
     # Minimal resume support: single path or None
     start_epoch = 0
@@ -117,7 +117,9 @@ if __name__ == "__main__":
     print(f"Building dataloaders...")
 
     train_data_cfg["patch_size"] = patch_size
+    train_data_cfg["zero_one"] = zero_one
     val_data_cfg["patch_size"] = patch_size
+    val_data_cfg["zero_one"] = zero_one
     train_loader = build_train_dataloader(**train_data_cfg)
     val_loader = build_val_dataloader(**val_data_cfg)
 
@@ -132,7 +134,7 @@ if __name__ == "__main__":
     ).to(device)
 
     model = torch.compile(model)
-    torch.manual_seed(42)
+    torch.manual_seed(43)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -223,7 +225,7 @@ if __name__ == "__main__":
         # Consolidated end-of-epoch logging payload
         end_of_epoch_log = {}
 
-        for i, (slices, angle) in enumerate(train_loader):
+        for i, (slices, angle, _) in enumerate(train_loader):
             slices = slices.to(device)
             angle = angle.to(device)
 

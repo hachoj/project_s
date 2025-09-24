@@ -1,4 +1,3 @@
 data_dir: "/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/val"
-zero_one: False
 num_workers: 12
 pin_memory: True 
