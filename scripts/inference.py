@@ -4,10 +4,12 @@ import numpy as np
 import cv2
 import time
 
-from scripts.common import bootstrap_project_root, get_device
+import sys
+import os
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-# Ensure project root imports (model/, data/, etc.) work reliably
-bootstrap_project_root()
 
 from model.utils import (
     reconstruct_angle_linear,
@@ -19,14 +21,13 @@ from model.reconstruction import extract_slices, reconstruct_volume, save_volume
 EVERY_X_SLICES = 1
 
 if __name__ == "__main__":
-    device = get_device()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"--------------------------------")
     print(f"Loading config file...")
 
     with open("configs/model/model_config.yaml") as f:
         model_cfg = yaml.safe_load(f)
 
-    # RDN encoder/decoder configs
     with open("configs/model/encoder.yaml") as f:
         encoder_cfg = yaml.safe_load(f)
 
@@ -42,14 +43,11 @@ if __name__ == "__main__":
     save_path = inference_cfg["save_path"]
     patient_name = image_path.split("/")[-1]
 
-    # data params
-    patch_size = inference_cfg["patch_size"]
-    stride = inference_cfg["stride"]
+    patch_size = model_cfg["patch_size"]
+    stride = model_cfg["stride"]
 
     # reconstruction params
     target_step_deg = inference_cfg["target_step_deg"]
-    arc_deg = inference_cfg["arc_deg"]
-    stride_deg = inference_cfg["stride_deg"]
 
     # augmentation params
     gaussian_noise_mean = inference_cfg.get("gaussian_noise_mean", 0.0)
@@ -57,7 +55,7 @@ if __name__ == "__main__":
     gaussian_noise_scale = inference_cfg.get("gaussian_noise_scale", 1.0)
 
     zero_one = inference_cfg.get("zero_one", False)
-    angle_norm = inference_cfg.get("angle_norm", 3)
+    # model expects inputs in [-1,1] if zero_one=False
 
     just_sr = inference_cfg.get("just_sr", False)
 
@@ -168,7 +166,7 @@ if __name__ == "__main__":
             save_volume(
                 reconstructed_slices,
                 reconstructed_volume,
-                save_path + patient_name + "_lin_" + str(target_step_deg) + "_deg_" + str(EVERY_X_SLICES) + "_slices",
+            save_path + patient_name + "_lin_" + str(target_step_deg) + "_deg_" + str(EVERY_X_SLICES) + "_slices",
             )
             print(f"Linear inference completed successfully")
             print(f"--------------------------------")
@@ -228,8 +226,6 @@ if __name__ == "__main__":
             + "_inference_"
             + str(target_step_deg)
             + "stp"
-            + str(stride_deg)
-            + "strd"
             + str(patch_size[0])
             + "ptch"
             + str(EVERY_X_SLICES)

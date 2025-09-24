@@ -1,9 +1,5 @@
-data_dir: "/home/chojnowski.h/weishao/chojnowski.h/project_i/data/datasets/train"
-patch_size: [64, 64]
-desired_angle_difference: 1.5
-non_uniform_desired_angle_difference: [1.2, 1.8]
+data_dir: "/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/train"
 zero_one: False
-angle_norm: 3  # 3 for [-pi/3, pi/3], 8 for [-pi/8, pi/8]
-arc_size: 20
 num_workers: 12
 pin_memory: True 
+batch_size: 128

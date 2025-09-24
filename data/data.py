@@ -2,6 +2,7 @@ import numpy as np
 import os
 import torch
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 
 
 class MicroUSTrain(Dataset):
@@ -14,7 +15,7 @@ class MicroUSTrain(Dataset):
         self.items = []
         self.patch_size = patch_size  # (ph, pw)
         self.zero_one = zero_one
-        for fn in sorted(os.listdir(data_directory_path)):
+        for fn in tqdm(sorted(os.listdir(data_directory_path)), desc="indexing dataset"):
             if not fn.endswith(".npz"):
                 continue
             path = os.path.join(data_directory_path, fn)
@@ -42,7 +43,7 @@ class MicroUSTrain(Dataset):
                 slices = torch.from_numpy(f["slices"]).float() / 255.0
             else:
                 slices = torch.from_numpy(f["slices"]).float() / 255.0 * 2.0 - 1.0
-            angle = torch.from_numpy(angle).float()
+            angle = torch.tensor(angle, dtype=torch.float32)
 
         # sanity checks
         assert angle < 1.0, "relative angle difference must be < 1"
@@ -117,7 +118,7 @@ class MicroUSVal(Dataset):
         self.items = []
         self.patch_size = patch_size  # (ph, pw)
         self.zero_one = zero_one
-        for fn in sorted(os.listdir(data_directory_path)):
+        for fn in tqdm(sorted(os.listdir(data_directory_path)), desc="indexing dataset"):
             if not fn.endswith(".npz"):
                 continue
             path = os.path.join(data_directory_path, fn)
@@ -145,14 +146,14 @@ class MicroUSVal(Dataset):
                 slices = torch.from_numpy(f["slices"]).float() / 255.0
             else:
                 slices = torch.from_numpy(f["slices"]).float() / 255.0 * 2.0 - 1.0
-            angle = torch.from_numpy(angle).float()
+            angle = torch.tensor(angle, dtype=torch.float32)
 
         assert angle < 1.0, "relative angle difference must be < 1"
 
         ph, pw = self.patch_size
-        _, H, W = non_removed_slices.shape
+        _, H, W = slices.shape
         assert ph <= H and pw <= W, "patch size > image size"
-        h, w = _rand_crop2d_content_aware(non_removed_slices, ph, pw, is_train=False)
+        h, w = _rand_crop2d_content_aware(slices, ph, pw, is_train=False)
         slices = slices[:, h : h + ph, w : w + pw]
 
         return (
@@ -164,8 +165,9 @@ class MicroUSVal(Dataset):
 def build_val_dataloader(
     data_dir,
     patch_size,
-    desired_angle_difference,
     zero_one=False,
+    num_workers=4,
+    pin_memory=True,
 ):
     dataset = MicroUSVal(data_dir, patch_size, zero_one)
     return DataLoader(

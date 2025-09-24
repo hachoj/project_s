@@ -3,20 +3,8 @@ model_path: "checkpoints/MASSIVE/checkpoint_epoch_80.pt"
 image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF093"
 save_path: "data/inference/MASSIVE/"
 
-# data params
-patch_size: [64, 64]
-stride: [56, 56]
-
-# reconstruction params
-arc_deg: 20
-stride_deg: 5
 target_step_deg: 0.5
 
-gaussian_noise_mean: 0.0
-gaussian_noise_std: 0.0
-gaussian_noise_scale: 0.0
-
 zero_one: False
-angle_norm: 3  # 3 for [-pi/3, pi/3],
 
 just_sr: True

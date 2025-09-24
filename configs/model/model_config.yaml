@@ -1,1 +1,3 @@
 embd_dim: 128
+patch_size: [128, 128]
+stride: [96, 96]

@@ -376,6 +376,7 @@ def reconstruct_angle_sr(
                         patch0 = x0[y0_ : y0_ + ph, x0_ : x0_ + pw]
                         patch1 = x1[y0_ : y0_ + ph, x0_ : x0_ + pw]
                         pair = torch.stack([patch0, patch1], dim=0)  # [2,ph,pw]
+                        pair = pair.unsqueeze(0)  # [1,2,ph,pw]  add batch dim
                         y = model(pair, rel_t)
                         # Normalize output shape to [ph,pw]
                         if isinstance(y, (tuple, list)):
@@ -419,10 +420,6 @@ def PSNR(x, y, zero_one=False):
 
 def SSIM_slicewise(x, y, zero_one=False):
     assert x.shape == y.shape
-    assert x.dim() == 3  # (T,H,W)
-
-    x = x.unsqueeze(1)
-    y = y.unsqueeze(1)
 
     data_range = 2.0 if not zero_one else 1.0
     ssim = StructuralSimilarityIndexMeasure(data_range=data_range).to(x.device)

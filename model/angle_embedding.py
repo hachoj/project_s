@@ -1,3 +1,6 @@
+import math
+import torch
+
 def get_angle_embedding(angles, embedding_dim):
     """
     This matches the implementation in Denoising Diffusion Probabilistic Models:

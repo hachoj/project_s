@@ -8,16 +8,15 @@ import yaml
 import wandb
 from torch.amp import autocast
 
-from scripts.common import bootstrap_project_root, get_device
-
-# Ensure project root imports (model/, data/, etc.) work reliably
-bootstrap_project_root()
+import sys
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from data.data import build_train_dataloader, build_val_dataloader
 from model.model import ProjectI
 from model.utils import (
     reconstruct_angle_sr,
-    reconstruct_removed_hw,
     PSNR,
     SSIM_slicewise,
 )
@@ -53,7 +52,7 @@ def monitor_training_step(model, optimizer, step, log_frequency):
 
 
 if __name__ == "__main__":
-    device = get_device()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"--------------------------------")
     print(f"Loading configs file...")
 
@@ -63,7 +62,6 @@ if __name__ == "__main__":
     with open("configs/model/model_config.yaml") as f:
         model_cfg = yaml.safe_load(f)
 
-    # RDN encoder/decoder configs
     with open("configs/model/encoder.yaml") as f:
         encoder_cfg = yaml.safe_load(f)
 
@@ -101,15 +99,14 @@ if __name__ == "__main__":
 
     # reconstruction params
     image_path = train_cfg["image_path"]
-    stride = train_cfg["stride"]
-    stride_deg = train_cfg["stride_deg"]
     target_step_deg = train_cfg["target_step_deg"]
     reconstruction_frequency = train_cfg["reconstruction_frequency"]
-    patch_size = train_data_cfg["patch_size"]
+
+    # Optional tiling params moved to model_config.yaml
+    patch_size = model_cfg["patch_size"]
+    stride = model_cfg["stride"]
 
     zero_one = train_cfg.get("zero_one", False)
-    angle_norm = train_cfg.get("angle_norm", 3)
-    arc_deg = train_data_cfg["arc_size"]
 
     # Minimal resume support: single path or None
     start_epoch = 0
@@ -119,6 +116,8 @@ if __name__ == "__main__":
     print(f"--------------------------------")
     print(f"Building dataloaders...")
 
+    train_data_cfg["patch_size"] = patch_size
+    val_data_cfg["patch_size"] = patch_size
     train_loader = build_train_dataloader(**train_data_cfg)
     val_loader = build_val_dataloader(**val_data_cfg)
 
@@ -131,6 +130,9 @@ if __name__ == "__main__":
         encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
     ).to(device)
+
+    model = torch.compile(model)
+    torch.manual_seed(42)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
@@ -162,7 +164,7 @@ if __name__ == "__main__":
 
     print(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
     print(f"Gradient accumulation steps: {gradient_accumulation_steps}")
-    print(f"Effective batch size: {1 * gradient_accumulation_steps}")
+    print(f"Effective batch size: {train_data_cfg['batch_size'] * gradient_accumulation_steps}")
 
     print(f"Model built successfully")
     print(f"--------------------------------")
@@ -171,7 +173,7 @@ if __name__ == "__main__":
     if wandb_run_id:
         wandb.init(
             entity="hachoj-university-of-florida",
-            project="project_i",
+            project="project_s",
             config={
                 **train_cfg,
                 **model_cfg,
@@ -187,7 +189,7 @@ if __name__ == "__main__":
     else:
         wandb.init(
             entity="hachoj-university-of-florida",
-            project="project_i",
+            project="project_s",
             config={
                 **train_cfg,
                 **model_cfg,
@@ -229,10 +231,11 @@ if __name__ == "__main__":
             if i % gradient_accumulation_steps == 0:
                 optimizer.zero_grad()
 
-            with autocast(device_type="cuda", dtype=dtype):
-                out = model(slices[inp_idx], angle)
+            with autocast(device_type=device, dtype=dtype):
+                out = model(slices[:, inp_idx, :, :], angle)
 
-            loss = loss_fn(out, slices[gt_idx])
+            target = slices[:, gt_idx, :, :].to(dtype=out.dtype)
+            loss = loss_fn(out, target)
 
             running_train_loss += loss.item()
 
@@ -260,10 +263,7 @@ if __name__ == "__main__":
                         lr * (actual_step + 1) / warmup_steps
                     )
 
-                if actual_step < cyclic_ratio_warmup_steps:
-                    cyclic_ratio = (
-                        cyclic_ratio_max * (actual_step + 1) / cyclic_ratio_warmup_steps
-                    )
+                # (Removed cyclic_ratio warmup; not used in this training loop)
 
                 grad_norm = torch.nn.utils.clip_grad_norm_(
                     model.parameters(), max_norm=max_grad_norm
@@ -280,6 +280,9 @@ if __name__ == "__main__":
                 }
                 train_log.update(step_metrics)
                 wandb.log(train_log, step=actual_step)
+
+                # Accumulate for epoch averages
+                epoch_train_loss_sum = epoch_train_loss_sum + train_log["train/loss"]
 
                 # Reset group accumulators
                 running_train_loss = 0.0
@@ -298,11 +301,13 @@ if __name__ == "__main__":
                     slices = slices.to(device)
                     angle = angle.to(device)
 
-                    out = model(slices, angle)
+                    out = model(slices[:, inp_idx, :, :], angle)
 
-                    loss = loss_fn(out, full_slices)
-                    PSNR_total += PSNR(out, full_slices, zero_one=zero_one)
-                    SSIM_total += SSIM_slicewise(out, full_slices, zero_one=zero_one)
+                    target = slices[:, gt_idx, :, :].to(dtype=out.dtype)
+                    loss = loss_fn(out, target)
+
+                    PSNR_total += PSNR(out, target, zero_one=zero_one)
+                    SSIM_total += SSIM_slicewise(out, target, zero_one=zero_one)
                     val_loss += loss.item()
 
             # Calculate average validation loss for the epoch
@@ -322,20 +327,18 @@ if __name__ == "__main__":
                 halve_counter += 1
 
             # Clear any cached GPU memory used during validation tiling
-            torch.cuda.empty_cache()
-            print(
-                f"Epoch {epoch + 1}: avg_train_loss: {epoch_avg_train_loss}, avg_val_loss: {avg_val_loss}"
-            )
+            if device == "cuda":
+                torch.cuda.empty_cache()
+
             end_of_epoch_log.update(
                 {
                     "epoch/val_loss": avg_val_loss,
                     "epoch/best_val_loss": best_val_loss,
                     "epoch/halve_counter": halve_counter,
                     "epoch/patience_counter": patience_counter,
-                    "epoch/train_avg_loss": epoch_avg_train_loss,
-                    "epoch/epoch": epoch + 1,
                     "epoch/PSNR": avg_PSNR,
                     "epoch/SSIM": avg_SSIM,
+                    "epoch/epoch": epoch + 1,
                 }
             )
         if (epoch + 1) % save_frequency == 0:
@@ -352,7 +355,7 @@ if __name__ == "__main__":
                 },
                 f"{save_dir}/checkpoint_epoch_{epoch + 1}.pt",
             )
-        if (epoch + 1) % reconstruction_frequency == 0 or epoch == 0:
+        if (epoch + 1) % reconstruction_frequency == 0:
             print(f"Reconstructing volume for epoch {epoch + 1}")
             extracted_slices = extract_slices(image_path)
             # Get the first key in extracted_slices instead of hardcoding
