@@ -99,15 +99,24 @@ if __name__ == "__main__":
             slices = slices.to(device)
             angles = angles.to(device)
 
-            relative_angle = angles[:, 1] - angles[:, 0]
+            delta = (angles[:, 2] - angles[:, 0]).clamp_min(1e-6)
+            relative_angle = (angles[:, 1] - angles[:, 0]) / delta
+            real_midline = (angles[:, 2] + angles[:, 0]) * 0.5
 
-            out = model(slices[:, inp_idx, :, :], relative_angle)
+            conditioning_slices = slices[:, inp_idx, :, :]
+            target_slice = slices[:, gt_idx, :, :]
 
-            target = slices[:, gt_idx, :, :].to(dtype=out.dtype)
-            loss = F.mse_loss(out, target)
+            out = model(
+                conditioning_slices,
+                relative_angle.unsqueeze(1),
+                delta.unsqueeze(1),
+                real_midline.unsqueeze(1),
+            )
 
-            PSNR_total += PSNR(out, target, zero_one=zero_one)
-            SSIM_total += SSIM_slicewise(out, target, zero_one=zero_one)
+            loss = F.mse_loss(out, target_slice)
+
+            PSNR_total += PSNR(out, target_slice, zero_one=zero_one)
+            SSIM_total += SSIM_slicewise(out, target_slice, zero_one=zero_one)
             val_loss += loss.item()
 
 

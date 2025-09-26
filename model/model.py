@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 
@@ -18,44 +19,39 @@ class ProjectI(nn.Module):
         self.encoder = encoder(**encoder_config)
         self.decoder = decoder(**decoder_config)
 
-    def forward(self, slices, angle):
+    def forward(self, slices, r, delta, m):
         """
-        Supports batched and unbatched inputs.
-
+        Forward pass with FiLM conditioning.
         Args:
-            slices: either [S,H,W] (unbatched) or [B,S,H,W] (batched)
-            angle: either [1] (unbatched) or [B] (batched), raw degree offset
-
+            slices: [S,H,W] or [B,S,H,W] input slices (S is number of anchors, typically 2)
+            r:      normalized position tensor [B] or [B,1]
+            delta:  gap between anchors in degrees [B] or [B,1]
+            m:      mid-angle in degrees [B] or [B,1]
         Returns:
-            out: [1,1,H,W] for unbatched, or [B,1,H,W] for batched
+            out: [B,1,H,W]
         """
         assert slices.dim() in (3, 4), "slices must be [S,H,W] or [B,S,H,W]"
+        # Normalize to batched
         if slices.dim() == 3:
-            # Unbatched path
-            S, H, W = slices.shape
-            assert angle.dim() == 1, "Angle should be a 1-D tensor"
+            slices = slices.unsqueeze(0)
 
-            x = slices.unsqueeze(1)  # [S,1,H,W]
-            feats = self.encoder(x)  # [S,C,H,W]
-            feats = feats.view(1, S*self.embd_dim, H, W)  # [1,S*C,H,W]
 
-            angle_emb = get_angle_embedding(angle, self.embd_dim)  # [1,C]
-            angle_emb = angle_emb.view(1, self.embd_dim, 1, 1).expand(1, self.embd_dim, H, W)  # [1,C,H,W]
+        # Batched path
+        B, S, H, W = slices.shape
 
-            out = self.decoder(feats, angle_emb)  # [1,1,H,W]
-            return out
-        else:
-            # Batched path
-            B, S, H, W = slices.shape
-            assert angle.dim() in (1, 2), "Angle should be [B] or [B,1]"
-            angle = angle.view(B)
+        def _prep(t):
+            if isinstance(t, (float, int)):
+                t = torch.tensor([t], dtype=slices.dtype, device=slices.device)
+            t = t if t.dim() > 1 else t.view(B, 1)
+            return t
+        
+        r = _prep(r)
+        delta = _prep(delta)
+        m = _prep(m)
+        # Encode slices
+        x = slices.view(B * S, 1, H, W)
+        feats = self.encoder(x)  # [B*S,C,H,W]
+        feats = feats.view(B, S * self.embd_dim, H, W)
 
-            # Flatten the pair dimension into batch for encoder
-            x = slices.view(B * S, 1, H, W)  # [B*S,1,H,W]
-            feats = self.encoder(x)  # [B*S,C,H,W] (angles unused in encoder)
-            feats = feats.view(B, S*self.embd_dim, H, W)  # [B,S*C,H,W]
-
-            angle_emb = get_angle_embedding(angle, self.embd_dim)  # [B,C]
-            angle_emb = angle_emb.view(B, self.embd_dim, 1, 1).expand(B, self.embd_dim, H, W)  # [B,C,H,W]
-            out = self.decoder(feats, angle_emb)  # [B,1,H,W]
-            return out
+        out = self.decoder(feats, r, delta, m)  # [B,1,H,W]
+        return out

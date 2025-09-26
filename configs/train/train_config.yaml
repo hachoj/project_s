@@ -1,5 +1,5 @@
-checkpoint_save_dir: "checkpoints/mse_2_slice"
-model_resume_path: "checkpoints/mse_2_slice/checkpoint_epoch_140.pt"
+checkpoint_save_dir: "checkpoints/new_l1"
+model_resume_path: None
 dtype: "bfloat16"
 
 # training params
@@ -11,11 +11,12 @@ lr: 0.0001
 max_halves: 4
 gradient_accumulation_steps: 1
 max_grad_norm: 0.0
+endpoint_weight: 0.2  # is really 0.4 since you do 0.2 for left and 0.2 for right
 
 patience: 50
 warmup_steps: 500
 num_epochs: 1000  # CHANGE BASED ON DATASET SIZE
 
 # reconstruction params
-image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF066"
-target_step_deg: 0.2
+image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF097"
+target_step_deg: 0.25

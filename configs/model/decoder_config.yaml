@@ -3,3 +3,5 @@ num_features: 128
 growth_rate: 128
 num_blocks: 8
 num_layers: 3
+film_features: 5
+delta_max: 1.8

@@ -1,5 +1,12 @@
 import math
 import torch
+import torch.nn as nn
+
+
+def _init_zero(module: nn.Module) -> None:
+    with torch.no_grad():
+        module.weight.zero_()
+        module.bias.zero_()
 
 def get_angle_embedding(angles, embedding_dim):
     """
@@ -27,3 +34,27 @@ def get_angle_embedding(angles, embedding_dim):
     if embedding_dim % 2 == 1:  # zero pad
         emb = torch.nn.functional.pad(emb, (0, 1, 0, 0))
     return emb
+
+class FiLM(nn.Module):
+    def __init__(self, cond_dim: int, feat_channels: int, hidden_dim: int = 64, scale: float = 0.1):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(cond_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, feat_channels * 2),
+        )
+        _init_zero(self.mlp[-1])
+        self.scale = scale
+
+    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        """Apply feature-wise linear modulation with precomputed conditioning.
+
+        Args:
+            x: [B,C,H,W]
+            cond: [B, cond_dim]
+        """
+        gamma_beta = self.mlp(cond)  # [B,2C]
+        gamma, beta = torch.chunk(gamma_beta, 2, dim=1)
+        gamma = (1.0 + self.scale * gamma).unsqueeze(2).unsqueeze(3)
+        beta = beta.unsqueeze(2).unsqueeze(3)
+        return x * gamma + beta

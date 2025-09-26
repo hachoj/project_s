@@ -24,7 +24,7 @@ from model.reconstruction import extract_slices, reconstruct_volume
 
 
 def loss_fn(out, full_slices):
-    return F.mse_loss(out, full_slices)
+    return F.l1_loss(out, full_slices)
 
 
 # Add this comprehensive monitoring function
@@ -90,6 +90,7 @@ if __name__ == "__main__":
     max_grad_norm = train_cfg["max_grad_norm"]
     if max_grad_norm <= 0:
         max_grad_norm = float("inf")
+    endpoint_weight = train_cfg.get("endpoint_weight", 0.0)
 
     dtype = (
         torch.bfloat16
@@ -219,6 +220,9 @@ if __name__ == "__main__":
         model.train()
 
         running_train_loss = 0.0
+        running_target_loss = 0.0
+        running_left_loss = 0.0
+        running_right_loss = 0.0
         micro_count = 0
 
         # Epoch-level accumulators (per optimizer update)
@@ -231,18 +235,34 @@ if __name__ == "__main__":
             slices = slices.to(device)
             angles = angles.to(device)
 
-            # Use raw degree offset between the target slice and the previous slice
-            relative_angle = angles[:, 1] - angles[:, 0]
+            # Build conditioning terms: r in [0,1], delta gap, and mid-angle m
+            delta = (angles[:, 2] - angles[:, 0]).clamp_min(1e-6)
+            r = (angles[:, 1] - angles[:, 0]) / delta
+            m = (angles[:, 2] + angles[:, 0]) * 0.5
+
+            conditioning_slices = slices[:, inp_idx, :, :]
+            left_slice = slices[:, 0, :, :].unsqueeze(1)
+            right_slice = slices[:, 2, :, :].unsqueeze(1)
+            target_slice = slices[:, gt_idx, :, :]
 
             # Only zero gradients at the start of accumulation cycle
             if i % gradient_accumulation_steps == 0:
                 optimizer.zero_grad()
 
             with autocast(device_type=device, dtype=dtype):
-                out = model(slices[:, inp_idx, :, :], relative_angle)
+                target_out = model(conditioning_slices, r.unsqueeze(1), delta.unsqueeze(1), m.unsqueeze(1))
+                left_out = model(conditioning_slices, torch.zeros_like(r).unsqueeze(1), delta.unsqueeze(1), m.unsqueeze(1))
+                right_out = model(conditioning_slices, torch.ones_like(r).unsqueeze(1), delta.unsqueeze(1), m.unsqueeze(1))
 
-            target = slices[:, gt_idx, :, :].to(dtype=out.dtype)
-            loss = loss_fn(out, target)
+            target_loss = loss_fn(target_out, target_slice)
+            left_loss = loss_fn(left_out, left_slice)
+            right_loss = loss_fn(right_out, right_slice)
+
+            running_target_loss += target_loss.item()
+            running_left_loss += left_loss.item()
+            running_right_loss += right_loss.item()
+
+            loss = (1 - 2 * endpoint_weight) * target_loss + endpoint_weight * (left_loss + right_loss)
 
             running_train_loss += loss.item()
 
@@ -281,6 +301,9 @@ if __name__ == "__main__":
                 group_count = max(1, micro_count)
                 train_log = {
                     "train/loss": running_train_loss / group_count,
+                    "train/target_loss": running_target_loss / group_count,
+                    "train/left_loss": running_left_loss / group_count,
+                    "train/right_loss": running_right_loss / group_count,
                     "train/grad_norm_total": grad_norm.item(),
                     "train/step": actual_step,
                     "train/learning_rate": optimizer.param_groups[0]["lr"],
@@ -308,15 +331,20 @@ if __name__ == "__main__":
                     slices = slices.to(device)
                     angles = angles.to(device)
 
-                    relative_angle = angles[:, 1] - angles[:, 0]
+                    delta = angles[:, 2] - angles[:, 0]
+                    delta = (angles[:, 2] - angles[:, 0]).clamp_min(1e-6)
+                    r = (angles[:, 1] - angles[:, 0]) / delta
+                    m = (angles[:, 2] + angles[:, 0]) * 0.5
 
-                    out = model(slices[:, inp_idx, :, :], relative_angle)
+                    conditioning_slices = slices[:, inp_idx, :, :]
+                    target_slice = slices[:, gt_idx, :, :]
 
-                    target = slices[:, gt_idx, :, :].to(dtype=out.dtype)
-                    loss = loss_fn(out, target)
+                    out = model(conditioning_slices, r.unsqueeze(1), delta.unsqueeze(1), m.unsqueeze(1))
 
-                    PSNR_total += PSNR(out, target, zero_one=zero_one)
-                    SSIM_total += SSIM_slicewise(out, target, zero_one=zero_one)
+                    loss = loss_fn(out, target_slice)
+
+                    PSNR_total += PSNR(out, target_slice, zero_one=zero_one)
+                    SSIM_total += SSIM_slicewise(out, target_slice, zero_one=zero_one)
                     val_loss += loss.item()
 
             # Calculate average validation loss for the epoch
