@@ -169,7 +169,7 @@ def reconstruct_removed_hw(
             ak = angles  # (T)  (degrees)
             aq = query_angles  # (Q)   (degrees)
 
-            y, _ = model(x, ak, aq, is_train=False)
+            y = model(x, ak, aq)
             if y.dim() != 3:
                 raise RuntimeError(f"Unexpected model output shape: {tuple(y.shape)}")
 
@@ -365,11 +365,6 @@ def reconstruct_angle_sr(
                 pred_uniform[gi] = pred_sum / w_sum.clamp_min(1e-8)
                 continue
 
-            # Raw degree offset from the lower anchor to the query angle
-            rel = g - a0
-            rel = float(min(max(rel, 0.0), float(a1 - a0)))
-            rel_t = torch.tensor([rel], dtype=torch.float32, device=device)
-
             pred_sum = torch.zeros((H, W), dtype=torch.float32, device=device)
             w_sum = torch.zeros((H, W), dtype=torch.float32, device=device)
             for y0_ in ys:
@@ -377,17 +372,16 @@ def reconstruct_angle_sr(
                     patch0 = x0[y0_ : y0_ + ph, x0_ : x0_ + pw]
                     patch1 = x1[y0_ : y0_ + ph, x0_ : x0_ + pw]
                     pair = torch.stack([patch0, patch1], dim=0)  # [2,ph,pw]
-                    pair = pair.unsqueeze(0)  # [1,2,ph,pw]  add batch dim
-                    y = model(pair, rel_t)
-                    # Normalize output shape to [ph,pw]
-                    if isinstance(y, (tuple, list)):
-                        y = y[0]
-                    if y.dim() == 2:
-                        y_hw = y
-                    elif y.dim() == 3:
+                    pair_angles = torch.tensor(
+                        [a0, a1], dtype=torch.float32, device=device
+                    )
+                    query_angle = torch.tensor([g], dtype=torch.float32, device=device)
+
+                    y = model(pair, pair_angles, query_angle)
+                    if y.dim() == 3:
                         y_hw = y[0]
-                    elif y.dim() == 4:
-                        y_hw = y[0, 0]
+                    elif y.dim() == 2:
+                        y_hw = y
                     else:
                         raise RuntimeError(
                             f"Unexpected model output shape: {tuple(y.shape)}"

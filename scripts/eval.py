@@ -44,7 +44,6 @@ if __name__ == "__main__":
     resume_path = eval_cfg.get("model_resume_path", None)
 
     zero_one = bool(model_cfg.get("zero_one", False))
-    slices_per_pred = model_cfg["slices_per_pred"]
 
     print(f"Config file loaded successfully")
     print(f"--------------------------------")
@@ -58,9 +57,11 @@ if __name__ == "__main__":
     print(f"--------------------------------")
     print(f"Building model...")
 
-    decoder_cfg["in_channels"] = slices_per_pred * model_cfg["embd_dim"]
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
+        patch_size=model_cfg["patch_size"],
+        num_harmonics=model_cfg["num_harmonics"],
+        num_heads=model_cfg["num_heads"],
         encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
     ).to(device)
@@ -99,9 +100,11 @@ if __name__ == "__main__":
             slices = slices.to(device)
             angles = angles.to(device)
 
-            relative_angle = angles[:, 1] - angles[:, 0]
+            context_slices = slices[:, inp_idx, :, :]
+            context_angles = angles[:, inp_idx]
+            query_angles = angles[:, gt_idx]
 
-            out = model(slices[:, inp_idx, :, :], relative_angle)
+            out = model(context_slices, context_angles, query_angles)
 
             target = slices[:, gt_idx, :, :].to(dtype=out.dtype)
             loss = F.mse_loss(out, target)

@@ -5,8 +5,15 @@ from .metaformer import LayerNorm2d
 
 
 class AttentionResample(nn.Module):
-    """
-    Pixel-wise cross attention between original and query slices.
+    """Token-level cross attention between context and query slices.
+
+    Accepts inputs with optional leading batch dimension:
+
+    - ``original_slices``: ``[B, T, C, H, W]`` or ``[T, C, H, W]``
+    - ``query_slices``: ``[B, Q, C, H, W]`` or ``[Q, C, H, W]``
+
+    Spatial dimensions are flattened so every pixel location in the query can
+    attend to every pixel across the context slices.
     """
 
     def __init__(self, embd_dim, patch_size, num_heads):
@@ -23,42 +30,80 @@ class AttentionResample(nn.Module):
     def forward(
         self, original_slices: torch.Tensor, query_slices: torch.Tensor
     ) -> torch.Tensor:
-        # original_slices: [T, C, H, W], query_slices: [Q, C, H, W]
-        if original_slices.dim() != 4 or query_slices.dim() != 4:
+        # Normalize shapes to include batch dimension if necessary
+        if original_slices.dim() == 4:
+            original_slices = original_slices.unsqueeze(0)
+            query_slices = query_slices.unsqueeze(0)
+            added_batch_dim = True
+        elif original_slices.dim() == 5:
+            added_batch_dim = False
+        else:
             raise ValueError(
-                "original_slices and query_slices must be 4D tensors [T, C, H, W]"
-            )
-        if query_slices.shape[1:] != original_slices.shape[1:]:
-            raise ValueError(
-                "original_slices and query_slices must share channel and spatial dimensions"
+                "original_slices must be a 4D or 5D tensor of shape [T,C,H,W] or [B,T,C,H,W]"
             )
 
-        T, C, H, W = original_slices.shape
-        Q = query_slices.shape[0]
+        if query_slices.dim() not in (4, 5):
+            raise ValueError(
+                "query_slices must be a 4D or 5D tensor of shape [Q,C,H,W] or [B,Q,C,H,W]"
+            )
+        if added_batch_dim and query_slices.dim() != 5:
+            query_slices = query_slices.unsqueeze(0)
 
-        # Positional embeddings per pixel (bounded magnitude)
+        if original_slices.dim() != query_slices.dim():
+            raise ValueError("original_slices and query_slices must have matching rank")
+
+        B, T, C, H, W = original_slices.shape
+        Bq, Q, Cq, Hq, Wq = query_slices.shape
+
+        if B != Bq:
+            raise ValueError("Batch dimension mismatch between original and query slices")
+        if (C, H, W) != (Cq, Hq, Wq):
+            raise ValueError(
+                "Channel/spatial dimensions must match between original and query slices"
+            )
+
         coords = torch.arange(H * W, device=original_slices.device, dtype=torch.long)
-        pos_embd = self.pos_embd(coords)  # [HW, C] (float32)
+        pos_embd = self.pos_embd(coords)  # [HW, C]
         if pos_embd.shape[1] != C:
             raise ValueError("pos_embd output dimension must match channel dimension C")
-        pos_embd = pos_embd.reshape(H, W, C).permute(2, 0, 1).unsqueeze(0)  # [1,C,H,W]
+        pos_embd = pos_embd.reshape(H, W, C).permute(2, 0, 1)
         pos_embd = pos_embd.to(dtype=original_slices.dtype)
 
-        original_slices = original_slices + pos_embd  # [T, C, H, W]
-        query_slices = query_slices + pos_embd  # [Q, C, H, W]
+        pos_embd = pos_embd.unsqueeze(0).unsqueeze(0)  # [1,1,C,H,W]
+        original_slices = original_slices + pos_embd
+        query_slices = query_slices + pos_embd
 
         identity = query_slices
 
-        key = self.key_norm(original_slices)
+        key = self.key_norm(original_slices.reshape(B * T, C, H, W))
+        key = key.view(B, T, C, H, W)
         value = key
-        query = self.query_norm(query_slices)
+        query = self.query_norm(query_slices.reshape(B * Q, C, H, W))
+        query = query.view(B, Q, C, H, W)
 
-        # Treat each spatial position as an independent batch element for attention.
-        key = key.permute(2, 3, 0, 1).reshape(H * W, T, C)
-        value = value.permute(2, 3, 0, 1).reshape(H * W, T, C)
-        query = query.permute(2, 3, 0, 1).reshape(H * W, Q, C)
+        key_tokens = key.reshape(B, T, C, H * W).permute(0, 1, 3, 2).reshape(
+            B, T * H * W, C
+        )
+        value_tokens = value.reshape(B, T, C, H * W).permute(0, 1, 3, 2).reshape(
+            B, T * H * W, C
+        )
+        query_tokens = query.reshape(B, Q, C, H * W).permute(0, 1, 3, 2).reshape(
+            B, Q * H * W, C
+        )
 
-        attended, _ = self.attention(query, key, value)
-        attended = attended.view(H, W, Q, C).permute(2, 3, 0, 1)
+        identity_tokens = identity.reshape(B, Q, C, H * W).permute(0, 1, 3, 2).reshape(
+            B, Q * H * W, C
+        )
 
-        return identity + attended
+        attended_tokens, _ = self.attention(query_tokens, key_tokens, value_tokens)
+        attended_tokens = attended_tokens + identity_tokens
+
+        attended = attended_tokens.view(B, Q, H * W, C).permute(0, 1, 3, 2)
+        attended = attended.reshape(B, Q, C, H, W)
+
+        out = attended
+
+        if added_batch_dim:
+            out = out.squeeze(0)
+
+        return out

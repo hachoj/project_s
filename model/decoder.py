@@ -65,14 +65,14 @@ class RDN(nn.Module):
 
         self.output = nn.Conv2d(self.G0, out_channels, kernel_size=3, padding=3 // 2)
 
-    def forward(self, x, angle_embedding):
+    def forward(self, x):
         sfe1 = self.sfe1(x)
         sfe2 = self.sfe2(sfe1)
 
-        x = sfe2 + angle_embedding
+        x = sfe2
         local_features = []
         for i in range(self.D):
-            x = self.rdbs[i](x) + angle_embedding
+            x = self.rdbs[i](x)
             local_features.append(x)
 
         x = self.gff(torch.cat(local_features, 1)) + sfe1  # global residual learning

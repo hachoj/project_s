@@ -1,5 +1,6 @@
 embd_dim: 128
-patch_size: [128, 128]
-stride: [96, 96]
+patch_size: [64, 64]
+stride: [56, 56]
 zero_one: False
-slices_per_pred: 2
+num_harmonics: 8
+num_heads: 4
