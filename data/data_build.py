@@ -20,6 +20,7 @@ ACCEPTABLE_ANGLE_DIFFERENCE = 1.8
 OUT_DIR = (
     "data/datasets/data_"
     + str(ACCEPTABLE_ANGLE_DIFFERENCE)
+    + "_rev"
 )
 
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -97,11 +98,11 @@ def process_patient(
                     angles=np.array([previous_angle, angles[i], next_angle], dtype=np.float32),
                 )
 
-                # np.savez(
-                #     path.replace(".npz", "_rev.npz"),
-                #     slices=slices[::-1],
-                #     angles=np.array([-1*next_angle, -1*angles[i], -1*previous_angle], dtype=np.float32),
-                # )
+                np.savez(
+                    path.replace(".npz", "_rev.npz"),
+                    slices=slices[::-1],
+                    angles=np.array([-1*next_angle, -1*angles[i], -1*previous_angle], dtype=np.float32),
+                )
 
                 previous_angle = angles[i]
                 next_angle = angles[i+2]

@@ -91,6 +91,12 @@ if __name__ == "__main__":
     if max_grad_norm <= 0:
         max_grad_norm = float("inf")
     endpoint_weight = train_cfg.get("endpoint_weight", 0.0)
+    is_lr_enabled = bool(train_cfg.get("is_lr_enabled", False))
+
+    if not is_lr_enabled and endpoint_weight != 0.0:
+        print(
+            "Left/right endpoint supervision disabled; ignoring non-zero endpoint_weight."
+        )
 
     dtype = (
         torch.bfloat16
@@ -108,7 +114,6 @@ if __name__ == "__main__":
     stride = model_cfg["stride"]
 
     zero_one = bool(model_cfg.get("zero_one", False))
-    slices_per_pred = int(model_cfg.get("slices_per_pred", 2))
 
     # Minimal resume support: single path or None
     start_epoch = 0
@@ -129,7 +134,6 @@ if __name__ == "__main__":
     print(f"--------------------------------")
     print(f"Building model...")
 
-    decoder_cfg["in_channels"] = slices_per_pred * model_cfg["embd_dim"]
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
         encoder_config=encoder_cfg,
@@ -241,9 +245,13 @@ if __name__ == "__main__":
             m = (angles[:, 2] + angles[:, 0]) * 0.5
 
             conditioning_slices = slices[:, inp_idx, :, :]
-            left_slice = slices[:, 0, :, :].unsqueeze(1)
-            right_slice = slices[:, 2, :, :].unsqueeze(1)
             target_slice = slices[:, gt_idx, :, :]
+            left_slice = None
+            right_slice = None
+
+            if is_lr_enabled:
+                left_slice = slices[:, 0, :, :].unsqueeze(1)
+                right_slice = slices[:, 2, :, :].unsqueeze(1)
 
             # Only zero gradients at the start of accumulation cycle
             if i % gradient_accumulation_steps == 0:
@@ -251,18 +259,35 @@ if __name__ == "__main__":
 
             with autocast(device_type=device, dtype=dtype):
                 target_out = model(conditioning_slices, r.unsqueeze(1), delta.unsqueeze(1), m.unsqueeze(1))
-                left_out = model(conditioning_slices, torch.zeros_like(r).unsqueeze(1), delta.unsqueeze(1), m.unsqueeze(1))
-                right_out = model(conditioning_slices, torch.ones_like(r).unsqueeze(1), delta.unsqueeze(1), m.unsqueeze(1))
+                if is_lr_enabled:
+                    left_out = model(
+                        conditioning_slices,
+                        torch.zeros_like(r).unsqueeze(1),
+                        delta.unsqueeze(1),
+                        m.unsqueeze(1),
+                    )
+                    right_out = model(
+                        conditioning_slices,
+                        torch.ones_like(r).unsqueeze(1),
+                        delta.unsqueeze(1),
+                        m.unsqueeze(1),
+                    )
 
             target_loss = loss_fn(target_out, target_slice)
-            left_loss = loss_fn(left_out, left_slice)
-            right_loss = loss_fn(right_out, right_slice)
-
             running_target_loss += target_loss.item()
-            running_left_loss += left_loss.item()
-            running_right_loss += right_loss.item()
 
-            loss = (1 - 2 * endpoint_weight) * target_loss + endpoint_weight * (left_loss + right_loss)
+            loss = target_loss
+
+            if is_lr_enabled:
+                left_loss = loss_fn(left_out, left_slice)
+                right_loss = loss_fn(right_out, right_slice)
+
+                running_left_loss += left_loss.item()
+                running_right_loss += right_loss.item()
+
+                loss = (1 - 2 * endpoint_weight) * target_loss + endpoint_weight * (
+                    left_loss + right_loss
+                )
 
             running_train_loss += loss.item()
 
@@ -302,12 +327,17 @@ if __name__ == "__main__":
                 train_log = {
                     "train/loss": running_train_loss / group_count,
                     "train/target_loss": running_target_loss / group_count,
-                    "train/left_loss": running_left_loss / group_count,
-                    "train/right_loss": running_right_loss / group_count,
                     "train/grad_norm_total": grad_norm.item(),
                     "train/step": actual_step,
                     "train/learning_rate": optimizer.param_groups[0]["lr"],
                 }
+                if is_lr_enabled:
+                    train_log.update(
+                        {
+                            "train/left_loss": running_left_loss / group_count,
+                            "train/right_loss": running_right_loss / group_count,
+                        }
+                    )
                 train_log.update(step_metrics)
                 wandb.log(train_log, step=actual_step)
 
@@ -316,6 +346,10 @@ if __name__ == "__main__":
 
                 # Reset group accumulators
                 running_train_loss = 0.0
+                running_target_loss = 0.0
+                if is_lr_enabled:
+                    running_left_loss = 0.0
+                    running_right_loss = 0.0
                 micro_count = 0
 
         if (epoch + 1) % val_frequency == 0 or epoch == 0:
@@ -325,13 +359,19 @@ if __name__ == "__main__":
             val_loss = 0.0
             PSNR_total = 0.0
             SSIM_total = 0.0
+            val_loss_left = 0.0
+            val_loss_right = 0.0
+            PSNR_left_total = 0.0
+            PSNR_right_total = 0.0
+            SSIM_left_total = 0.0
+            SSIM_right_total = 0.0
 
             with torch.no_grad():
                 for (slices, angles) in val_loader:
                     slices = slices.to(device)
                     angles = angles.to(device)
 
-                    delta = angles[:, 2] - angles[:, 0]
+                    # Build conditioning terms: r in [0,1], delta gap, and mid-angle m
                     delta = (angles[:, 2] - angles[:, 0]).clamp_min(1e-6)
                     r = (angles[:, 1] - angles[:, 0]) / delta
                     m = (angles[:, 2] + angles[:, 0]) * 0.5
@@ -339,19 +379,70 @@ if __name__ == "__main__":
                     conditioning_slices = slices[:, inp_idx, :, :]
                     target_slice = slices[:, gt_idx, :, :]
 
-                    out = model(conditioning_slices, r.unsqueeze(1), delta.unsqueeze(1), m.unsqueeze(1))
+                    target_out = model(
+                        conditioning_slices,
+                        r.unsqueeze(1),
+                        delta.unsqueeze(1),
+                        m.unsqueeze(1),
+                    )
 
-                    loss = loss_fn(out, target_slice)
+                    target_loss = loss_fn(target_out, target_slice)
 
-                    PSNR_total += PSNR(out, target_slice, zero_one=zero_one)
-                    SSIM_total += SSIM_slicewise(out, target_slice, zero_one=zero_one)
-                    val_loss += loss.item()
+                    val_loss += target_loss.item()
+                    PSNR_total += PSNR(target_out, target_slice, zero_one=zero_one)
+                    SSIM_total += SSIM_slicewise(
+                        target_out, target_slice, zero_one=zero_one
+                    )
+
+                    if is_lr_enabled:
+                        left_slice = slices[:, 0, :, :].unsqueeze(1)
+                        right_slice = slices[:, 2, :, :].unsqueeze(1)
+                        left_out = model(
+                            conditioning_slices,
+                            torch.zeros_like(r).unsqueeze(1),
+                            delta.unsqueeze(1),
+                            m.unsqueeze(1),
+                        )
+                        right_out = model(
+                            conditioning_slices,
+                            torch.ones_like(r).unsqueeze(1),
+                            delta.unsqueeze(1),
+                            m.unsqueeze(1),
+                        )
+
+                        left_loss = loss_fn(left_out, left_slice)
+                        right_loss = loss_fn(right_out, right_slice)
+
+                        val_loss_left += left_loss.item()
+                        val_loss_right += right_loss.item()
+
+                        PSNR_left_total += PSNR(
+                            left_out, left_slice, zero_one=zero_one
+                        )
+                        PSNR_right_total += PSNR(
+                            right_out, right_slice, zero_one=zero_one
+                        )
+                        SSIM_left_total += SSIM_slicewise(
+                            left_out, left_slice, zero_one=zero_one
+                        )
+                        SSIM_right_total += SSIM_slicewise(
+                            right_out, right_slice, zero_one=zero_one
+                        )
 
             # Calculate average validation loss for the epoch
 
-            avg_val_loss = val_loss / len(val_loader)
-            avg_PSNR = PSNR_total / len(val_loader)
-            avg_SSIM = SSIM_total / len(val_loader)
+            denom = len(val_loader) if len(val_loader) > 0 else 1
+            avg_val_loss = val_loss / denom
+            avg_PSNR = PSNR_total / denom
+            avg_SSIM = SSIM_total / denom
+
+            if is_lr_enabled:
+                avg_val_loss_left = val_loss_left / denom
+                avg_val_loss_right = val_loss_right / denom
+                avg_PSNR_left = PSNR_left_total / denom
+                avg_PSNR_right = PSNR_right_total / denom
+                avg_SSIM_left = SSIM_left_total / denom
+                avg_SSIM_right = SSIM_right_total / denom
 
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
@@ -367,17 +458,28 @@ if __name__ == "__main__":
             if device == "cuda":
                 torch.cuda.empty_cache()
 
-            end_of_epoch_log.update(
-                {
-                    "epoch/val_loss": avg_val_loss,
-                    "epoch/best_val_loss": best_val_loss,
-                    "epoch/halve_counter": halve_counter,
-                    "epoch/patience_counter": patience_counter,
-                    "epoch/PSNR": avg_PSNR,
-                    "epoch/SSIM": avg_SSIM,
-                    "epoch/epoch": epoch + 1,
-                }
-            )
+            validation_log = {
+                "epoch/val_loss": avg_val_loss,
+                "epoch/best_val_loss": best_val_loss,
+                "epoch/halve_counter": halve_counter,
+                "epoch/patience_counter": patience_counter,
+                "epoch/PSNR": avg_PSNR,
+                "epoch/SSIM": avg_SSIM,
+                "epoch/epoch": epoch + 1,
+            }
+            if is_lr_enabled:
+                validation_log.update(
+                    {
+                        "epoch/val_loss_left": avg_val_loss_left,
+                        "epoch/val_loss_right": avg_val_loss_right,
+                        "epoch/PSNR_left": avg_PSNR_left,
+                        "epoch/PSNR_right": avg_PSNR_right,
+                        "epoch/SSIM_left": avg_SSIM_left,
+                        "epoch/SSIM_right": avg_SSIM_right,
+                    }
+                )
+
+            end_of_epoch_log.update(validation_log)
         if (epoch + 1) % save_frequency == 0:
             os.makedirs(save_dir, exist_ok=True)
             torch.save(

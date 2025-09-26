@@ -37,7 +37,7 @@ class ProjectI(nn.Module):
 
 
         # Batched path
-        B, S, H, W = slices.shape
+        B, _, H, W = slices.shape
 
         def _prep(t):
             if isinstance(t, (float, int)):
@@ -49,9 +49,14 @@ class ProjectI(nn.Module):
         delta = _prep(delta)
         m = _prep(m)
         # Encode slices
-        x = slices.view(B * S, 1, H, W)
-        feats = self.encoder(x)  # [B*S,C,H,W]
-        feats = feats.view(B, S * self.embd_dim, H, W)
+        x = slices.view(B * 2, 1, H, W)
+        feats = self.encoder(x)  # [B*2,C,H,W]
+        feats = feats.view(B, 2 * self.embd_dim, H, W)  # [B,2*C,H,W]
+
+        r4 = r.view(-1, 1, 1, 1)
+        out_lin = torch.lerp(slices[:, 0:1], slices[:, 1:2], r4)
+
 
         out = self.decoder(feats, r, delta, m)  # [B,1,H,W]
+        out = out + out_lin  
         return out

@@ -44,7 +44,6 @@ if __name__ == "__main__":
     resume_path = eval_cfg.get("model_resume_path", None)
 
     zero_one = bool(model_cfg.get("zero_one", False))
-    slices_per_pred = model_cfg["slices_per_pred"]
 
     print(f"Config file loaded successfully")
     print(f"--------------------------------")
@@ -58,7 +57,6 @@ if __name__ == "__main__":
     print(f"--------------------------------")
     print(f"Building model...")
 
-    decoder_cfg["in_channels"] = slices_per_pred * model_cfg["embd_dim"]
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
         encoder_config=encoder_cfg,

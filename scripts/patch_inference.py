@@ -84,14 +84,12 @@ if __name__ == "__main__":
     stride = _ensure_pair(stride)
 
     zero_one = bool(model_cfg.get("zero_one", False))
-    slices_per_pred = int(model_cfg["slices_per_pred"])
 
     print("Config files loaded successfully")
     print("--------------------------------")
     print("Building model...")
 
     decoder_cfg = dict(decoder_cfg)
-    decoder_cfg["in_channels"] = slices_per_pred * model_cfg["embd_dim"]
 
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],

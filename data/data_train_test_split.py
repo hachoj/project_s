@@ -129,7 +129,7 @@ def manual_patient_split(data_dir, train_dir, val_dir):
 if __name__ == "__main__":
     # Adjust these paths as needed
     manual_patient_split(
-        data_dir="/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/data_1.8",
-        train_dir="/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/train",
-        val_dir="/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/val",
+        data_dir="/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/data_1.8_rev",
+        train_dir="/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/train_rev",
+        val_dir="/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/val_rev",
     )

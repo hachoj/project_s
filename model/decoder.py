@@ -44,7 +44,7 @@ class RDN(nn.Module):
         growth_rate=64,
         num_blocks=8,
         num_layers=3,
-        film_features=None,
+        cond_dim=None,
         delta_max=2.0,
     ):
         super().__init__()
