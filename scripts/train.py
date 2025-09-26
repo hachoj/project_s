@@ -24,7 +24,7 @@ from model.reconstruction import extract_slices, reconstruct_volume
 
 
 def loss_fn(out, full_slices):
-    return F.l1_loss(out, full_slices)
+    return F.mse_loss(out, full_slices)
 
 
 # Add this comprehensive monitoring function
@@ -107,6 +107,7 @@ if __name__ == "__main__":
     stride = model_cfg["stride"]
 
     zero_one = bool(model_cfg.get("zero_one", False))
+    slices_per_pred = int(model_cfg.get("slices_per_pred", 2))
 
     # Minimal resume support: single path or None
     start_epoch = 0
@@ -127,11 +128,9 @@ if __name__ == "__main__":
     print(f"--------------------------------")
     print(f"Building model...")
 
+    decoder_cfg["in_channels"] = slices_per_pred * model_cfg["embd_dim"]
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
-        patch_size=model_cfg["patch_size"],
-        num_harmonics=model_cfg["num_harmonics"],
-        num_heads=model_cfg["num_heads"],
         encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
     ).to(device)
@@ -232,16 +231,15 @@ if __name__ == "__main__":
             slices = slices.to(device)
             angles = angles.to(device)
 
-            context_slices = slices[:, inp_idx, :, :]
-            context_angles = angles[:, inp_idx]
-            query_angles = angles[:, gt_idx]
+            # Use raw degree offset between the target slice and the previous slice
+            relative_angle = angles[:, 1] - angles[:, 0]
 
             # Only zero gradients at the start of accumulation cycle
             if i % gradient_accumulation_steps == 0:
                 optimizer.zero_grad()
 
             with autocast(device_type=device, dtype=dtype):
-                out = model(context_slices, context_angles, query_angles)
+                out = model(slices[:, inp_idx, :, :], relative_angle)
 
             target = slices[:, gt_idx, :, :].to(dtype=out.dtype)
             loss = loss_fn(out, target)
@@ -310,11 +308,9 @@ if __name__ == "__main__":
                     slices = slices.to(device)
                     angles = angles.to(device)
 
-                    context_slices = slices[:, inp_idx, :, :]
-                    context_angles = angles[:, inp_idx]
-                    query_angles = angles[:, gt_idx]
+                    relative_angle = angles[:, 1] - angles[:, 0]
 
-                    out = model(context_slices, context_angles, query_angles)
+                    out = model(slices[:, inp_idx, :, :], relative_angle)
 
                     target = slices[:, gt_idx, :, :].to(dtype=out.dtype)
                     loss = loss_fn(out, target)

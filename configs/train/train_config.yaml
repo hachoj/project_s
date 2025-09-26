@@ -1,5 +1,5 @@
-checkpoint_save_dir: "checkpoints/l1_attention"
-model_resume_path: None
+checkpoint_save_dir: "checkpoints/mse_2_slice"
+model_resume_path: "checkpoints/mse_2_slice/checkpoint_epoch_140.pt"
 dtype: "bfloat16"
 
 # training params

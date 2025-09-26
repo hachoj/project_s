@@ -45,6 +45,7 @@ if __name__ == "__main__":
     patch_size = model_cfg["patch_size"]
     stride = model_cfg["stride"]
     zero_one = bool(model_cfg.get("zero_one", False))  # model expects inputs in [-1,1] if zero_one=False
+    slices_per_pred = model_cfg["slices_per_pred"]
 
     # reconstruction params
     target_step_deg = inference_cfg["target_step_deg"]
@@ -55,11 +56,9 @@ if __name__ == "__main__":
     print(f"--------------------------------")
     print(f"Building model...")
 
+    decoder_cfg["in_channels"] = slices_per_pred * model_cfg["embd_dim"]
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
-        patch_size=model_cfg["patch_size"],
-        num_harmonics=model_cfg["num_harmonics"],
-        num_heads=model_cfg["num_heads"],
         encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
     ).to(device)
