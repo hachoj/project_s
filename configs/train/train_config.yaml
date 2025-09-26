@@ -1,5 +1,5 @@
-checkpoint_save_dir: "checkpoints/l1-linres-FiLM"
-model_resume_path: "checkpoints/l1-linres-FiLM/checkpoint_epoch_20.pt"
+checkpoint_save_dir: "checkpoints/iter"
+model_resume_path: None
 dtype: "bfloat16"
 
 # training params

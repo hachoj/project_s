@@ -9,6 +9,7 @@ import wandb
 from torch.amp import autocast
 
 import sys
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
@@ -136,6 +137,7 @@ if __name__ == "__main__":
 
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
+        time_steps=model_cfg["time_steps"],
         encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
     ).to(device)
@@ -173,7 +175,9 @@ if __name__ == "__main__":
 
     print(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
     print(f"Gradient accumulation steps: {gradient_accumulation_steps}")
-    print(f"Effective batch size: {train_data_cfg['batch_size'] * gradient_accumulation_steps}")
+    print(
+        f"Effective batch size: {train_data_cfg['batch_size'] * gradient_accumulation_steps}"
+    )
 
     print(f"Model built successfully")
     print(f"--------------------------------")
@@ -258,7 +262,12 @@ if __name__ == "__main__":
                 optimizer.zero_grad()
 
             with autocast(device_type=device, dtype=dtype):
-                target_out = model(conditioning_slices, r.unsqueeze(1), delta.unsqueeze(1), m.unsqueeze(1))
+                target_out = model(
+                    conditioning_slices,
+                    r.unsqueeze(1),
+                    delta.unsqueeze(1),
+                    m.unsqueeze(1),
+                )
                 if is_lr_enabled:
                     left_out = model(
                         conditioning_slices,
@@ -367,7 +376,7 @@ if __name__ == "__main__":
             SSIM_right_total = 0.0
 
             with torch.no_grad():
-                for (slices, angles) in val_loader:
+                for slices, angles in val_loader:
                     slices = slices.to(device)
                     angles = angles.to(device)
 
@@ -416,9 +425,7 @@ if __name__ == "__main__":
                         val_loss_left += left_loss.item()
                         val_loss_right += right_loss.item()
 
-                        PSNR_left_total += PSNR(
-                            left_out, left_slice, zero_one=zero_one
-                        )
+                        PSNR_left_total += PSNR(left_out, left_slice, zero_one=zero_one)
                         PSNR_right_total += PSNR(
                             right_out, right_slice, zero_one=zero_one
                         )
