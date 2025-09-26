@@ -23,22 +23,21 @@ class ProjectI(nn.Module):
         Supports batched and unbatched inputs.
 
         Args:
-            slices: either [2,H,W] (unbatched) or [B,2,H,W] (batched)
-            angle: either [1] (unbatched) or [B] (batched), relative in [0,1]
+            slices: either [S,H,W] (unbatched) or [B,S,H,W] (batched)
+            angle: either [1] (unbatched) or [B] (batched), raw degree offset
 
         Returns:
             out: [1,1,H,W] for unbatched, or [B,1,H,W] for batched
         """
-        assert slices.dim() in (3, 4), "slices must be [2,H,W] or [B,2,H,W]"
+        assert slices.dim() in (3, 4), "slices must be [S,H,W] or [B,S,H,W]"
         if slices.dim() == 3:
             # Unbatched path
             S, H, W = slices.shape
-            assert S == 2, "Expecting exactly two input slices"
             assert angle.dim() == 1, "Angle should be a 1-D tensor"
 
-            x = slices.unsqueeze(1)  # [2,1,H,W]
-            feats = self.encoder(x)  # [2,C,H,W]
-            feats = feats.view(1, 2*self.embd_dim, H, W)  # [1,2*C,H,W]
+            x = slices.unsqueeze(1)  # [S,1,H,W]
+            feats = self.encoder(x)  # [S,C,H,W]
+            feats = feats.view(1, S*self.embd_dim, H, W)  # [1,S*C,H,W]
 
             angle_emb = get_angle_embedding(angle, self.embd_dim)  # [1,C]
             angle_emb = angle_emb.view(1, self.embd_dim, 1, 1).expand(1, self.embd_dim, H, W)  # [1,C,H,W]
@@ -48,14 +47,13 @@ class ProjectI(nn.Module):
         else:
             # Batched path
             B, S, H, W = slices.shape
-            assert S == 2, "Expecting exactly two input slices per sample"
             assert angle.dim() in (1, 2), "Angle should be [B] or [B,1]"
             angle = angle.view(B)
 
             # Flatten the pair dimension into batch for encoder
-            x = slices.view(B * S, 1, H, W)  # [B*2,1,H,W]
-            feats = self.encoder(x)  # [B*2,C,H,W] (angles unused in encoder)
-            feats = feats.view(B, 2*self.embd_dim, H, W)  # [B,2*C,H,W]
+            x = slices.view(B * S, 1, H, W)  # [B*S,1,H,W]
+            feats = self.encoder(x)  # [B*S,C,H,W] (angles unused in encoder)
+            feats = feats.view(B, S*self.embd_dim, H, W)  # [B,S*C,H,W]
 
             angle_emb = get_angle_embedding(angle, self.embd_dim)  # [B,C]
             angle_emb = angle_emb.view(B, self.embd_dim, 1, 1).expand(B, self.embd_dim, H, W)  # [B,C,H,W]

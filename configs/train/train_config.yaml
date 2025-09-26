@@ -1,11 +1,11 @@
-checkpoint_save_dir: "checkpoints/mse"
-model_resume_path: None
+checkpoint_save_dir: "checkpoints/mse_2_slice"
+model_resume_path: "checkpoints/mse_2_slice/checkpoint_epoch_140.pt"
 dtype: "bfloat16"
 
 # training params
-save_frequency: 25  # (epochs)
+save_frequency: 20  # (epochs)
 val_frequency: 1  # (epochs)
-reconstruction_frequency: 25 # (epochs)
+reconstruction_frequency: 20 # (epochs)
 log_frequency: 10  # (steps)
 lr: 0.0001
 max_halves: 4
@@ -14,8 +14,8 @@ max_grad_norm: 0.0
 
 patience: 50
 warmup_steps: 500
-num_epochs: 2000  # CHANGE BASED ON DATASET SIZE
+num_epochs: 1000  # CHANGE BASED ON DATASET SIZE
 
 # reconstruction params
 image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF066"
-target_step_deg: 0.25
+target_step_deg: 0.2

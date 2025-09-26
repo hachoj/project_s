@@ -9,7 +9,7 @@ def get_angle_embedding(angles, embedding_dim):
     This matches the implementation in tensor2tensor, but differs slightly
     from the description in Section 3.5 of "Attention Is All You Need".
     args:
-        angles: a 1-D tensor of angles normalized to [0, 1]
+        angles: a 1-D tensor of angles representing degree offsets
         embedding_dim: the dimension of the output
     returns:
         angles x embedded_dim tensor

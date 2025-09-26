@@ -2,3 +2,4 @@ embd_dim: 128
 patch_size: [128, 128]
 stride: [96, 96]
 zero_one: False
+slices_per_pred: 2

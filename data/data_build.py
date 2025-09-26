@@ -20,6 +20,7 @@ ACCEPTABLE_ANGLE_DIFFERENCE = 1.8
 OUT_DIR = (
     "data/datasets/data_"
     + str(ACCEPTABLE_ANGLE_DIFFERENCE)
+    + "_rel_rev"
 )
 
 os.makedirs(OUT_DIR, exist_ok=True)
@@ -34,12 +35,11 @@ def process_patient_slices(patient_dict: dict) -> dict:
 def process_patient(
     patient_dict: dict, out_path: str, patient_name: str, label: str
 ) -> int:
-    """Build 3-slice windows and save triplets (prev, curr, next) + relative angle.
+    """Build 3-slice windows and save triplets (prev, curr, next) with angles.
 
     - Saves npz per middle slice containing:
         - slices: [3, H, W] uint8, (prev, curr, next)
-        - angle:  float32 in [0, 1], relative position of middle between prev/next
-        - angles: [3] float32, absolute angles (prev, curr, next)
+        - angles: [3] float32, absolute angles in degrees (prev, curr, next)
     - Skips windows whose prev→next total angle exceeds ACCEPTABLE_ANGLE_DIFFERENCE
     - Skips degenerate windows where prev and next angles are identical
     """
@@ -83,7 +83,6 @@ def process_patient(
             if gap <= ACCEPTABLE_ANGLE_DIFFERENCE:
                 slice_number += 1
 
-                relative_angle = (angles[i] - previous_angle) / (next_angle - previous_angle)
                 file_name = f"patch_{slice_number:03d}.npz"
                 path = os.path.join(patient_dir, file_name)
 
@@ -96,13 +95,12 @@ def process_patient(
                 np.savez(
                     path,
                     slices=slices,
-                    angle=np.float32(relative_angle),
                     angles=np.array([previous_angle, angles[i], next_angle], dtype=np.float32),
                 )
+
                 np.savez(
                     path.replace(".npz", "_rev.npz"),
                     slices=slices[::-1],
-                    angle=np.float32(1.0 - relative_angle),
                     angles=np.array([-1*next_angle, -1*angles[i], -1*previous_angle], dtype=np.float32),
                 )
 

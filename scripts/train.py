@@ -107,6 +107,7 @@ if __name__ == "__main__":
     stride = model_cfg["stride"]
 
     zero_one = bool(model_cfg.get("zero_one", False))
+    slices_per_pred = int(model_cfg.get("slices_per_pred", 2))
 
     # Minimal resume support: single path or None
     start_epoch = 0
@@ -127,6 +128,7 @@ if __name__ == "__main__":
     print(f"--------------------------------")
     print(f"Building model...")
 
+    decoder_cfg["in_channels"] = slices_per_pred * model_cfg["embd_dim"]
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
         encoder_config=encoder_cfg,
@@ -225,16 +227,19 @@ if __name__ == "__main__":
         # Consolidated end-of-epoch logging payload
         end_of_epoch_log = {}
 
-        for i, (slices, angle, _) in enumerate(train_loader):
+        for i, (slices, angles) in enumerate(train_loader):
             slices = slices.to(device)
-            angle = angle.to(device)
+            angles = angles.to(device)
+
+            # Use raw degree offset between the target slice and the previous slice
+            relative_angle = angles[:, 1] - angles[:, 0]
 
             # Only zero gradients at the start of accumulation cycle
             if i % gradient_accumulation_steps == 0:
                 optimizer.zero_grad()
 
             with autocast(device_type=device, dtype=dtype):
-                out = model(slices[:, inp_idx, :, :], angle)
+                out = model(slices[:, inp_idx, :, :], relative_angle)
 
             target = slices[:, gt_idx, :, :].to(dtype=out.dtype)
             loss = loss_fn(out, target)
@@ -299,11 +304,13 @@ if __name__ == "__main__":
             SSIM_total = 0.0
 
             with torch.no_grad():
-                for (slices, angle) in val_loader:
+                for (slices, angles) in val_loader:
                     slices = slices.to(device)
-                    angle = angle.to(device)
+                    angles = angles.to(device)
 
-                    out = model(slices[:, inp_idx, :, :], angle)
+                    relative_angle = angles[:, 1] - angles[:, 0]
+
+                    out = model(slices[:, inp_idx, :, :], relative_angle)
 
                     target = slices[:, gt_idx, :, :].to(dtype=out.dtype)
                     loss = loss_fn(out, target)

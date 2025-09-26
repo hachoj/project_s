@@ -13,12 +13,11 @@ if PROJECT_ROOT not in sys.path:
 from model.utils import (
     reconstruct_angle_linear,
     reconstruct_angle_sr,
-    reconstruct_angle_sr_multipass,
 )
 from model.model import ProjectI
 from model.reconstruction import extract_slices, reconstruct_volume, save_volume
 
-EVERY_X_SLICES = 1
+EVERY_X_SLICES = 2
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -46,17 +45,18 @@ if __name__ == "__main__":
     patch_size = model_cfg["patch_size"]
     stride = model_cfg["stride"]
     zero_one = bool(model_cfg.get("zero_one", False))  # model expects inputs in [-1,1] if zero_one=False
+    slices_per_pred = model_cfg["slices_per_pred"]
 
     # reconstruction params
     target_step_deg = inference_cfg["target_step_deg"]
 
     just_sr = inference_cfg.get("just_sr", False)
-    multipass = inference_cfg.get("multipass", False)
 
     print(f"Config file loaded successfully")
     print(f"--------------------------------")
     print(f"Building model...")
 
+    decoder_cfg["in_channels"] = slices_per_pred * model_cfg["embd_dim"]
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
         encoder_config=encoder_cfg,
@@ -169,26 +169,15 @@ if __name__ == "__main__":
 
         print(f"Starting SR inference...")
         start_time = time.time()
-        if multipass:
-            pred_uniform, grid_deg = reconstruct_angle_sr_multipass(
-                model,
-                slices_THW=slices_lr,  # (T,H,W)
-                angles_deg_T=angles_lr,  # (T,)
-                target_step_deg=target_step_deg,
-                zero_one=zero_one,
-                patch_size=patch_size,
-                stride_hw=stride,
-            )
-        else:
-            pred_uniform, grid_deg = reconstruct_angle_sr(
-                model,
-                slices_THW=slices_lr,  # (T,H,W)
-                angles_deg_T=angles_lr,  # (T,)
-                target_step_deg=target_step_deg,
-                zero_one=zero_one,
-                patch_size=patch_size,
-                stride_hw=stride,
-            )
+        pred_uniform, grid_deg = reconstruct_angle_sr(
+            model,
+            slices_THW=slices_lr,  # (T,H,W)
+            angles_deg_T=angles_lr,  # (T,)
+            target_step_deg=target_step_deg,
+            zero_one=zero_one,
+            patch_size=patch_size,
+            stride_hw=stride,
+        )
         end_time = time.time()
         print(f"SR inference time: {end_time - start_time} seconds")
 
@@ -218,7 +207,6 @@ if __name__ == "__main__":
             + "_inf_"
             + str(target_step_deg)
             + "_stp_"
-            + "multipass_" if multipass else "single_"
             + str(EVERY_X_SLICES)
             + "slices",
         )

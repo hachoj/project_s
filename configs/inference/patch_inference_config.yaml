@@ -1,0 +1,13 @@
+
+# paths
+model_path: "checkpoints/mse_2_slice/checkpoint_epoch_160.pt"
+patch_path: "data/datasets/val/negative_UF197_patch_001.npz"
+output_prefix: "data/inference/patch/negative_UF197_patch_001"
+
+# reconstruction
+target_step_deg: 0.1
+just_sr: false
+
+# optional overrides for tiling; defaults fall back to configs/model/model_config.yaml
+# patch_size: [128, 128]
+# stride: [96, 96]

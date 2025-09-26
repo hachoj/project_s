@@ -44,6 +44,7 @@ if __name__ == "__main__":
     resume_path = eval_cfg.get("model_resume_path", None)
 
     zero_one = bool(model_cfg.get("zero_one", False))
+    slices_per_pred = model_cfg["slices_per_pred"]
 
     print(f"Config file loaded successfully")
     print(f"--------------------------------")
@@ -57,6 +58,7 @@ if __name__ == "__main__":
     print(f"--------------------------------")
     print(f"Building model...")
 
+    decoder_cfg["in_channels"] = slices_per_pred * model_cfg["embd_dim"]
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
         encoder_config=encoder_cfg,
@@ -93,11 +95,13 @@ if __name__ == "__main__":
     gt_idx = [1]
 
     with torch.no_grad():
-        for (slices, angle, angles) in val_loader:
+        for (slices, angles) in val_loader:
             slices = slices.to(device)
-            angle = angle.to(device)
+            angles = angles.to(device)
 
-            out = model(slices[:, inp_idx, :, :], angle)
+            relative_angle = angles[:, 1] - angles[:, 0]
+
+            out = model(slices[:, inp_idx, :, :], relative_angle)
 
             target = slices[:, gt_idx, :, :].to(dtype=out.dtype)
             loss = F.mse_loss(out, target)
@@ -111,7 +115,7 @@ if __name__ == "__main__":
                 angles[0, inp_idx],
                 slices[0, inp_idx, :, :].unsqueeze(1),
                 angles[0, gt_idx],
-                radians=True,
+                radians=False,
             )
 
             loss_linear = F.mse_loss(out_linear, slices[:, gt_idx, :, :])

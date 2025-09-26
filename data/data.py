@@ -21,11 +21,11 @@ class MicroUSTrain(Dataset):
             path = os.path.join(data_directory_path, fn)
             # only read the small metadata once
             with np.load(path, allow_pickle=False) as f:
-                angle = float(f["angle"])
+                angles = f["angles"]
             self.items.append(
                 {
                     "path": path,
-                    "angle": angle,
+                    "angles": angles
                 }
             )
 
@@ -35,7 +35,7 @@ class MicroUSTrain(Dataset):
     def __getitem__(self, idx):
         rec = self.items[idx]
         path = rec["path"]
-        angle = rec["angle"]
+        angles = rec["angles"]
 
         # lazy load the slices + angles
         with np.load(path, allow_pickle=False) as f:
@@ -43,10 +43,7 @@ class MicroUSTrain(Dataset):
                 slices = torch.from_numpy(f["slices"]).float() / 255.0
             else:
                 slices = torch.from_numpy(f["slices"]).float() / 255.0 * 2.0 - 1.0
-            angle = torch.tensor(angle, dtype=torch.float32)
-
-        # sanity checks
-        assert angle < 1.0, "relative angle difference must be < 1"
+            angles = torch.from_numpy(angles).float()
 
         ph, pw = self.patch_size
         _, H, W = slices.shape
@@ -54,7 +51,7 @@ class MicroUSTrain(Dataset):
         h, w = _rand_crop2d_content_aware(slices, ph, pw)
         slices = slices[:, h : h + ph, w : w + pw]
 
-        return slices, angle
+        return slices, angles
 
 
 def _worker_init_fn(_):
@@ -124,12 +121,10 @@ class MicroUSVal(Dataset):
             path = os.path.join(data_directory_path, fn)
             # only read the small metadata once
             with np.load(path, allow_pickle=False) as f:
-                angle = float(f["angle"])
                 angles = f["angles"]
             self.items.append(
                 {
                     "path": path,
-                    "angle": angle,
                     "angles": angles
                 }
             )
@@ -140,7 +135,6 @@ class MicroUSVal(Dataset):
     def __getitem__(self, idx):
         rec = self.items[idx]
         path = rec["path"]
-        angle = rec["angle"]
         angles = rec["angles"]
 
         # lazy load the slices + angles
@@ -149,10 +143,7 @@ class MicroUSVal(Dataset):
                 slices = torch.from_numpy(f["slices"]).float() / 255.0
             else:
                 slices = torch.from_numpy(f["slices"]).float() / 255.0 * 2.0 - 1.0
-            angle = torch.tensor(angle, dtype=torch.float32)
             angles = torch.from_numpy(angles).float()
-
-        assert angle < 1.0, "relative angle difference must be < 1"
 
         ph, pw = self.patch_size
         _, H, W = slices.shape
@@ -162,7 +153,6 @@ class MicroUSVal(Dataset):
 
         return (
             slices,
-            angle,
             angles,
         )
 

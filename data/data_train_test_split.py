@@ -1,7 +1,63 @@
 import os
-import shutil
-from pathlib import Path
 import json
+import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+from tqdm import tqdm
+
+
+def _collect_patient_files(data_path: Path):
+    """Return a map of patient id -> list of patch files (single scan per patient)."""
+
+    patient_files = {}
+
+    with os.scandir(data_path) as patient_entries:
+        for patient_entry in patient_entries:
+            if not patient_entry.is_dir():
+                continue
+
+            with os.scandir(patient_entry.path) as patch_entries:
+                patches = [
+                    Path(patch_entry.path)
+                    for patch_entry in patch_entries
+                    if patch_entry.is_file() and patch_entry.name.endswith(".npz")
+                ]
+
+            if patches:
+                patient_files[patient_entry.name] = patches
+
+    return patient_files
+
+
+def _copy_patient_files(patients, destination, patient_files, desc, max_workers=None):
+    """Copy all patch files for the provided patients."""
+
+    destination.mkdir(parents=True, exist_ok=True)
+    total_files = sum(len(patient_files[patient]) for patient in patients)
+
+    if total_files == 0:
+        return
+
+    workers = max_workers or min(32, (os.cpu_count() or 1) * 2)
+
+    def _copy_single(src: Path, dst: Path) -> None:
+        # shutil.copy uses optimized OS copyfile implementations when available
+        shutil.copy(src, dst)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = []
+
+        for patient in patients:
+            prefix = f"{patient}_"
+            for patch_file in patient_files[patient]:
+                target = destination / f"{prefix}{patch_file.name}"
+                futures.append(executor.submit(_copy_single, patch_file, target))
+
+        for future in tqdm(
+            as_completed(futures), total=total_files, desc=desc, unit="file"
+        ):
+            future.result()
 
 
 def manual_patient_split(data_dir, train_dir, val_dir):
@@ -10,18 +66,18 @@ def manual_patient_split(data_dir, train_dir, val_dir):
     while keeping all patches from each patient together.
     """
 
-    # Get all patient directories
-    patient_dirs = [d for d in Path(data_dir).iterdir() if d.is_dir()]
+    data_path = Path(data_dir)
+    patient_files = _collect_patient_files(data_path)
 
-    # Count patches per patient
-    patient_patches = {}
-    for patient_dir in patient_dirs:
-        num_patches = len(list(patient_dir.glob("*.npz")))
-        if num_patches > 0:
-            patient_patches[patient_dir.name] = num_patches
+    if not patient_files:
+        print("No patient data found.")
+        return
 
-    # Sort patients by patch count (descending)
-    sorted_patients = sorted(patient_patches.items(), key=lambda x: x[1], reverse=True)
+    patient_patches = {patient: len(files) for patient, files in patient_files.items()}
+
+    sorted_patients = sorted(
+        patient_patches.items(), key=lambda item: item[1], reverse=True
+    )
 
     total_patches = sum(patient_patches.values())
     target_val_patches = int(total_patches * 0.05)
@@ -30,21 +86,18 @@ def manual_patient_split(data_dir, train_dir, val_dir):
     print(f"Target val patches (~5%): {target_val_patches}")
     print(f"Target train patches (~95%): {total_patches - target_val_patches}")
 
-    # Greedy assignment to validation set
     val_patients = []
     val_patch_count = 0
 
     for patient, patch_count in sorted_patients:
-        if (
-            val_patch_count + patch_count <= target_val_patches * 1.2
-        ):  # Allow 20% overage
+        if val_patch_count + patch_count <= target_val_patches * 1.2:  # Allow 20% overage
             val_patients.append(patient)
             val_patch_count += patch_count
 
-    train_patients = [p for p, _ in sorted_patients if p not in val_patients]
+    train_patients = [patient for patient, _ in sorted_patients if patient not in val_patients]
     train_patch_count = total_patches - val_patch_count
 
-    print(f"\nSplit results:")
+    print("\nSplit results:")
     print(
         f"Train: {len(train_patients)} patients, {train_patch_count} patches ({train_patch_count/total_patches*100:.1f}%)"
     )
@@ -54,30 +107,10 @@ def manual_patient_split(data_dir, train_dir, val_dir):
 
     print(f"\nValidation patients: {val_patients}")
 
-    # Create train and val directories
-    Path(train_dir).mkdir(parents=True, exist_ok=True)
-    Path(val_dir).mkdir(parents=True, exist_ok=True)
-
-    # Copy patches to appropriate directories (flattened structure)
     print("\nCopying files...")
+    _copy_patient_files(train_patients, Path(train_dir), patient_files, "Copying train files")
+    _copy_patient_files(val_patients, Path(val_dir), patient_files, "Copying val files")
 
-    # Train patients
-    for patient in train_patients:
-        patient_dir = Path(data_dir) / patient
-        for patch_file in patient_dir.glob("*.npz"):
-            # Create new filename with patient prefix to avoid collisions
-            new_name = f"{patient}_{patch_file.name}"
-            shutil.copy(patch_file, Path(train_dir) / new_name)
-
-    # Val patients
-    for patient in val_patients:
-        patient_dir = Path(data_dir) / patient
-        for patch_file in patient_dir.glob("*.npz"):
-            # Create new filename with patient prefix to avoid collisions
-            new_name = f"{patient}_{patch_file.name}"
-            shutil.copy(patch_file, Path(val_dir) / new_name)
-
-    # Save split info for reproducibility
     split_info = {
         "train_patients": train_patients,
         "val_patients": val_patients,
@@ -86,17 +119,17 @@ def manual_patient_split(data_dir, train_dir, val_dir):
         "total_patches": total_patches,
     }
 
-    with open(Path(data_dir) / "split_info.json", "w") as f:
+    with open(data_path / "split_info.json", "w", encoding="utf-8") as f:
         json.dump(split_info, f, indent=2)
 
-    print(f"\nSplit info saved to {Path(data_dir) / 'split_info.json'}")
+    print(f"\nSplit info saved to {data_path / 'split_info.json'}")
     print("Done!")
 
 
 if __name__ == "__main__":
     # Adjust these paths as needed
     manual_patient_split(
-        data_dir="/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/data_1.8",
+        data_dir="/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/data_1.8_rel_rev",
         train_dir="/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/train",
         val_dir="/home/chojnowski.h/weishao/chojnowski.h/project_s/data/datasets/val",
     )

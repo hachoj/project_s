@@ -1,1 +1,1 @@
-model_resume_path: "checkpoints/mse/checkpoint_epoch_200.pt"
+model_resume_path: "checkpoints/mse_2_slice/checkpoint_epoch_160.pt"
