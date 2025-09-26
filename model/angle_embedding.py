@@ -8,7 +8,7 @@ def _init_zero(module: nn.Module) -> None:
         module.weight.zero_()
         module.bias.zero_()
 
-def get_time_embedding(time, embedding_dim):
+def get_angle_embedding(angles, embedding_dim):
     """
     This matches the implementation in Denoising Diffusion Probabilistic Models:
     From Fairseq.
@@ -21,9 +21,9 @@ def get_time_embedding(time, embedding_dim):
     returns:
         angles x embedded_dim tensor
     """
-    assert len(time.shape) == 1
+    assert len(angles.shape) == 1
 
-    time = time * 1000.0  # scale to [0, 1000]
+    angles = angles * 1000.0  # scale to [0, 1000]
 
     half_dim = embedding_dim // 2
     emb = math.log(10000) / (half_dim - 1)

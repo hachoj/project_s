@@ -1,6 +1,6 @@
 # paths
 model_path: "checkpoints/mse_2_slice/checkpoint_epoch_160.pt"
-image_path: "../project_n/data/Original_Data_in_DICOM_Format/negative/UF197"
+image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF197"
 save_path: "data/inference/mse_rev/"
 
 target_step_deg: 1.0

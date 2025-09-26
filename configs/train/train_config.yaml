@@ -1,4 +1,4 @@
-checkpoint_save_dir: "checkpoints/iter"
+checkpoint_save_dir: "checkpoints/l1-linres-FiLM"
 model_resume_path: None
 dtype: "bfloat16"
 
@@ -19,5 +19,5 @@ warmup_steps: 500
 num_epochs: 1000  # CHANGE BASED ON DATASET SIZE
 
 # reconstruction params
-image_path: "../project_n/data/Original_Data_in_DICOM_Format/negative/UF197"
+image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF197"
 target_step_deg: 0.25
