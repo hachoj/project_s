@@ -55,7 +55,7 @@ class RDN(nn.Module):
         self.C = num_layers
 
         if cond_dim is None:
-            cond_dim = 14
+            cond_dim = 6
         self.cond_dim = cond_dim
         self.delta_max = float(delta_max)
 
@@ -99,10 +99,8 @@ class RDN(nn.Module):
         )
         return cond
 
-    def forward(self, x, r, delta, m, t):
+    def forward(self, x, r, delta, m):
         cond = self._build_condition(r, delta, m)
-        assert t.dim() == 2 and t.size(1) == 8, "t must be [B,8]"
-        cond = torch.cat([cond, t], dim=1)
 
         sfe1 = self.sfe1(x)
         sfe2 = self.sfe2(sfe1)

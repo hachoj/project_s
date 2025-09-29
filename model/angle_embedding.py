@@ -8,7 +8,7 @@ def _init_zero(module: nn.Module) -> None:
         module.weight.zero_()
         module.bias.zero_()
 
-def get_angle_embedding(angles, embedding_dim):
+def get_time_embedding(time, embedding_dim):
     """
     This matches the implementation in Denoising Diffusion Probabilistic Models:
     From Fairseq.
@@ -16,14 +16,14 @@ def get_angle_embedding(angles, embedding_dim):
     This matches the implementation in tensor2tensor, but differs slightly
     from the description in Section 3.5 of "Attention Is All You Need".
     args:
-        time: a 1-D tensor of angles representing degree offsets
+        time: a 1-D tensor of time representing degree offsets
         embedding_dim: the dimension of the output
     returns:
-        angles x embedded_dim tensor
+        time x embedded_dim tensor
     """
-    assert len(angles.shape) == 1
+    assert len(time.shape) == 1
 
-    angles = angles * 1000.0  # scale to [0, 1000]
+    time = time * 1000.0  # scale to [0, 1000]
 
     half_dim = embedding_dim // 2
     emb = math.log(10000) / (half_dim - 1)

@@ -1,8 +1,8 @@
 in_channels: 256
 out_channels: 1
-num_features: 96
-growth_rate: 96
-num_blocks: 6
+num_features: 128
+growth_rate: 128
+num_blocks: 8
 num_layers: 3
-cond_dim: 14
+cond_dim: 6
 delta_max: 1.8

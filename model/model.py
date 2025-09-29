@@ -11,13 +11,11 @@ class ProjectI(nn.Module):
     def __init__(
         self,
         embd_dim,
-        time_steps,
         encoder_config,
         decoder_config,
     ):
         super().__init__()
         self.embd_dim = embd_dim
-        self.time_steps = time_steps
         self.encoder = encoder(**encoder_config)
         self.decoder = decoder(**decoder_config)
 
@@ -51,9 +49,6 @@ class ProjectI(nn.Module):
         delta = _prep(delta)
         m = _prep(m)
 
-        times = torch.linspace(0, 1, self.time_steps, device=slices.device)
-        time_embeds = get_time_embedding(times, 8)  # [T,8]
-
         # Encode slices
         x = slices.view(B * 2, 1, H, W)
         feats = self.encoder(x)  # [B*2,C,H,W]
@@ -62,9 +57,6 @@ class ProjectI(nn.Module):
         r4 = r.view(-1, 1, 1, 1)
         x_0 = torch.lerp(slices[:, 0:1], slices[:, 1:2], r4)
 
-        x = x_0 + self.decoder(feats, r, delta, m, time_embeds[0].expand(B, -1))  # [B,1,H,W]
+        x = self.decoder(feats, r, delta, m)  # [B,1,H,W]
 
-        for t in range(self.time_steps -1):
-            x = x + self.decoder(feats, r, delta, m, time_embeds[t+1].expand(B, -1))  # [B,1,H,W]
-
-        return x
+        return x + x_0

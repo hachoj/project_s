@@ -1,1 +1,1 @@
-model_resume_path: "checkpoints/mse_2_slice/checkpoint_epoch_160.pt"
+model_resume_path: "checkpoints/l1-linres-FiLM/checkpoint_epoch_440.pt"

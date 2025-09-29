@@ -93,11 +93,15 @@ if __name__ == "__main__":
         max_grad_norm = float("inf")
     endpoint_weight = train_cfg.get("endpoint_weight", 0.0)
     is_lr_enabled = bool(train_cfg.get("is_lr_enabled", False))
+    cyclic_weight = train_cfg.get("cyclic_weight", 0.0)
+    is_cyclic_enabled = bool(train_cfg.get("is_cyclic_enabled", False))
 
     if not is_lr_enabled and endpoint_weight != 0.0:
         print(
             "Left/right endpoint supervision disabled; ignoring non-zero endpoint_weight."
         )
+    if not is_cyclic_enabled and cyclic_weight != 0.0:
+        print("Cyclic supervision disabled; ignoring non-zero cyclic_weight.")
 
     dtype = (
         torch.bfloat16
@@ -137,7 +141,6 @@ if __name__ == "__main__":
 
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
-        time_steps=model_cfg["time_steps"],
         encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
     ).to(device)
@@ -231,6 +234,8 @@ if __name__ == "__main__":
         running_target_loss = 0.0
         running_left_loss = 0.0
         running_right_loss = 0.0
+        running_right_cyclic_loss = 0.0
+        running_left_cyclic_loss = 0.0
         micro_count = 0
 
         # Epoch-level accumulators (per optimizer update)
@@ -247,6 +252,10 @@ if __name__ == "__main__":
             delta = (angles[:, 2] - angles[:, 0]).clamp_min(1e-6)
             r = (angles[:, 1] - angles[:, 0]) / delta
             m = (angles[:, 2] + angles[:, 0]) * 0.5
+            left_delta = (angles[:, 1] - angles[:, 0]).clamp_min(1e-6)
+            right_delta = (angles[:, 2] - angles[:, 1]).clamp_min(1e-6)
+            left_mid = (angles[:, 1] + angles[:, 0]) * 0.5
+            right_mid = (angles[:, 2] + angles[:, 1]) * 0.5
 
             conditioning_slices = slices[:, inp_idx, :, :]
             target_slice = slices[:, gt_idx, :, :]
@@ -281,6 +290,26 @@ if __name__ == "__main__":
                         delta.unsqueeze(1),
                         m.unsqueeze(1),
                     )
+                    if is_cyclic_enabled and cyclic_weight > 0.0:
+                        cyclic_slice = target_out.detach()
+                        left_cyclic_conditioning_slices = torch.cat(
+                            (left_slice, cyclic_slice), dim=1
+                        )
+                        right_cyclic_conditioning_slices = torch.cat(
+                            (right_slice, cyclic_slice), dim=1
+                        )
+                        left_cyclic_out = model(
+                            left_cyclic_conditioning_slices,
+                            torch.ones_like(r).unsqueeze(1),
+                            left_delta.unsqueeze(1),
+                            left_mid.unsqueeze(1),
+                        )
+                        right_cyclic_out = model(
+                            right_cyclic_conditioning_slices,
+                            torch.zeros_like(r).unsqueeze(1),
+                            right_delta.unsqueeze(1),
+                            right_mid.unsqueeze(1),
+                        )
 
             target_loss = loss_fn(target_out, target_slice)
             running_target_loss += target_loss.item()
@@ -297,6 +326,16 @@ if __name__ == "__main__":
                 loss = (1 - 2 * endpoint_weight) * target_loss + endpoint_weight * (
                     left_loss + right_loss
                 )
+                if is_cyclic_enabled and cyclic_weight > 0.0:
+                    left_cyclic_loss = loss_fn(left_cyclic_out, target_slice)
+                    right_cyclic_loss = loss_fn(right_cyclic_out, target_slice)
+
+                    running_left_cyclic_loss += left_cyclic_loss.item()
+                    running_right_cyclic_loss += right_cyclic_loss.item()
+
+                    loss = (1 - 2 * endpoint_weight - 2 * cyclic_weight) * target_loss + endpoint_weight * (
+                        left_loss + right_loss
+                    ) + cyclic_weight * (left_cyclic_loss + right_cyclic_loss)
 
             running_train_loss += loss.item()
 
@@ -347,6 +386,13 @@ if __name__ == "__main__":
                             "train/right_loss": running_right_loss / group_count,
                         }
                     )
+                    if is_cyclic_enabled and cyclic_weight > 0.0:
+                        train_log.update(
+                            {
+                                "train/left_cyclic_loss": running_left_cyclic_loss / group_count,
+                                "train/right_cyclic_loss": running_right_cyclic_loss / group_count,
+                            }
+                        )
                 train_log.update(step_metrics)
                 wandb.log(train_log, step=actual_step)
 
@@ -359,22 +405,23 @@ if __name__ == "__main__":
                 if is_lr_enabled:
                     running_left_loss = 0.0
                     running_right_loss = 0.0
+                    if is_cyclic_enabled and cyclic_weight > 0.0:
+                        running_left_cyclic_loss = 0.0
+                        running_right_cyclic_loss = 0.0
                 micro_count = 0
 
         if (epoch + 1) % val_frequency == 0 or epoch == 0:
             # validation loop
             model.eval()
 
-            val_loss = 0.0
+            val_loss_weighted = 0.0
+            val_loss_target = 0.0
             PSNR_total = 0.0
             SSIM_total = 0.0
             val_loss_left = 0.0
             val_loss_right = 0.0
-            PSNR_left_total = 0.0
-            PSNR_right_total = 0.0
-            SSIM_left_total = 0.0
-            SSIM_right_total = 0.0
-
+            val_loss_left_cyclic = 0.0
+            val_loss_right_cyclic = 0.0
             with torch.no_grad():
                 for slices, angles in val_loader:
                     slices = slices.to(device)
@@ -384,6 +431,10 @@ if __name__ == "__main__":
                     delta = (angles[:, 2] - angles[:, 0]).clamp_min(1e-6)
                     r = (angles[:, 1] - angles[:, 0]) / delta
                     m = (angles[:, 2] + angles[:, 0]) * 0.5
+                    left_delta = (angles[:, 1] - angles[:, 0]).clamp_min(1e-6)
+                    right_delta = (angles[:, 2] - angles[:, 1]).clamp_min(1e-6)
+                    left_mid = (angles[:, 1] + angles[:, 0]) * 0.5
+                    right_mid = (angles[:, 2] + angles[:, 1]) * 0.5
 
                     conditioning_slices = slices[:, inp_idx, :, :]
                     target_slice = slices[:, gt_idx, :, :]
@@ -396,8 +447,9 @@ if __name__ == "__main__":
                     )
 
                     target_loss = loss_fn(target_out, target_slice)
-
-                    val_loss += target_loss.item()
+                    target_loss_item = target_loss.item()
+                    val_loss_target += target_loss_item
+                    weighted_loss_item = target_loss_item
                     PSNR_total += PSNR(target_out, target_slice, zero_one=zero_one)
                     SSIM_total += SSIM_slicewise(
                         target_out, target_slice, zero_one=zero_one
@@ -422,34 +474,71 @@ if __name__ == "__main__":
                         left_loss = loss_fn(left_out, left_slice)
                         right_loss = loss_fn(right_out, right_slice)
 
-                        val_loss_left += left_loss.item()
-                        val_loss_right += right_loss.item()
+                        left_loss_item = left_loss.item()
+                        right_loss_item = right_loss.item()
 
-                        PSNR_left_total += PSNR(left_out, left_slice, zero_one=zero_one)
-                        PSNR_right_total += PSNR(
-                            right_out, right_slice, zero_one=zero_one
+                        val_loss_left += left_loss_item
+                        val_loss_right += right_loss_item
+                        weighted_loss_item = (
+                            (1 - 2 * endpoint_weight) * target_loss_item
+                            + endpoint_weight * (left_loss_item + right_loss_item)
                         )
-                        SSIM_left_total += SSIM_slicewise(
-                            left_out, left_slice, zero_one=zero_one
-                        )
-                        SSIM_right_total += SSIM_slicewise(
-                            right_out, right_slice, zero_one=zero_one
-                        )
+
+                        if is_cyclic_enabled and cyclic_weight > 0.0:
+                            cyclic_slice = target_out.detach()
+                            left_cyclic_conditioning_slices = torch.cat(
+                                (left_slice, cyclic_slice), dim=1
+                            )
+                            right_cyclic_conditioning_slices = torch.cat(
+                                (right_slice, cyclic_slice), dim=1
+                            )
+                            left_cyclic_out = model(
+                                left_cyclic_conditioning_slices,
+                                torch.ones_like(r).unsqueeze(1),
+                                left_delta.unsqueeze(1),
+                                left_mid.unsqueeze(1),
+                            )
+                            right_cyclic_out = model(
+                                right_cyclic_conditioning_slices,
+                                torch.zeros_like(r).unsqueeze(1),
+                                right_delta.unsqueeze(1),
+                                right_mid.unsqueeze(1),
+                            )
+
+                            left_cyclic_loss = loss_fn(left_cyclic_out, target_slice)
+                            right_cyclic_loss = loss_fn(right_cyclic_out, target_slice)
+
+                            left_cyclic_loss_item = left_cyclic_loss.item()
+                            right_cyclic_loss_item = right_cyclic_loss.item()
+
+                            val_loss_left_cyclic += left_cyclic_loss_item
+                            val_loss_right_cyclic += right_cyclic_loss_item
+
+                            weighted_loss_item = (
+                                (1 - 2 * endpoint_weight - 2 * cyclic_weight)
+                                * target_loss_item
+                                + endpoint_weight
+                                * (left_loss_item + right_loss_item)
+                                + cyclic_weight
+                                * (left_cyclic_loss_item + right_cyclic_loss_item)
+                            )
+
+                    val_loss_weighted += weighted_loss_item
 
             # Calculate average validation loss for the epoch
 
             denom = len(val_loader) if len(val_loader) > 0 else 1
-            avg_val_loss = val_loss / denom
+            avg_val_loss = val_loss_weighted / denom
+            avg_val_loss_target = val_loss_target / denom
             avg_PSNR = PSNR_total / denom
             avg_SSIM = SSIM_total / denom
 
             if is_lr_enabled:
                 avg_val_loss_left = val_loss_left / denom
                 avg_val_loss_right = val_loss_right / denom
-                avg_PSNR_left = PSNR_left_total / denom
-                avg_PSNR_right = PSNR_right_total / denom
-                avg_SSIM_left = SSIM_left_total / denom
-                avg_SSIM_right = SSIM_right_total / denom
+                if is_cyclic_enabled and cyclic_weight > 0.0:
+                    avg_val_loss_left_cyclic = val_loss_left_cyclic / denom
+                    avg_val_loss_right_cyclic = val_loss_right_cyclic / denom
 
             if avg_val_loss < best_val_loss:
                 best_val_loss = avg_val_loss
@@ -467,6 +556,7 @@ if __name__ == "__main__":
 
             validation_log = {
                 "epoch/val_loss": avg_val_loss,
+                "epoch/val_loss_target": avg_val_loss_target,
                 "epoch/best_val_loss": best_val_loss,
                 "epoch/halve_counter": halve_counter,
                 "epoch/patience_counter": patience_counter,
@@ -479,12 +569,15 @@ if __name__ == "__main__":
                     {
                         "epoch/val_loss_left": avg_val_loss_left,
                         "epoch/val_loss_right": avg_val_loss_right,
-                        "epoch/PSNR_left": avg_PSNR_left,
-                        "epoch/PSNR_right": avg_PSNR_right,
-                        "epoch/SSIM_left": avg_SSIM_left,
-                        "epoch/SSIM_right": avg_SSIM_right,
                     }
                 )
+                if is_cyclic_enabled and cyclic_weight > 0.0:
+                    validation_log.update(
+                        {
+                            "epoch/val_loss_left_cyclic": avg_val_loss_left_cyclic,
+                            "epoch/val_loss_right_cyclic": avg_val_loss_right_cyclic,
+                        }
+                    )
 
             end_of_epoch_log.update(validation_log)
         if (epoch + 1) % save_frequency == 0:

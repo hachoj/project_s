@@ -59,7 +59,6 @@ if __name__ == "__main__":
 
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
-        time_steps=model_cfg["time_steps"],
         encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
     ).to(device)
