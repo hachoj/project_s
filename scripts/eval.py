@@ -24,13 +24,6 @@ if __name__ == "__main__":
     with open("configs/model/model_config.yaml") as f:
         model_cfg = yaml.safe_load(f)
 
-    # RDN encoder/decoder configs may be embedded or in separate files
-    if isinstance(model_cfg.get("encoder_config"), dict):
-        encoder_cfg = model_cfg["encoder_config"]
-    else:
-        with open("configs/model/encoder.yaml") as f:
-            encoder_cfg = yaml.safe_load(f)
-
     if isinstance(model_cfg.get("decoder_config"), dict):
         decoder_cfg = model_cfg["decoder_config"]
     else:
@@ -59,8 +52,8 @@ if __name__ == "__main__":
 
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
-        encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
+        linres=model_cfg["linres"],
     ).to(device)
 
     model = torch.compile(model)

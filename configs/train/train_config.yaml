@@ -1,5 +1,5 @@
-checkpoint_save_dir: "checkpoints/l1-linres-FiLM-cyclic"
-model_resume_path: None
+checkpoint_save_dir: null
+model_resume_path: null
 dtype: "bfloat16"
 
 # training params
@@ -11,11 +11,6 @@ lr: 0.0003
 max_halves: 4
 gradient_accumulation_steps: 1
 max_grad_norm: 0.0
-endpoint_weight: 0.05  # is really 0.4 since you do 0.2 for left and 0.2 for right
-is_lr_enabled: True
-cyclic_weight: 0.05
-is_cyclic_enabled: True
-
 patience: 50
 warmup_steps: 500
 num_epochs: 1000  # CHANGE BASED ON DATASET SIZE

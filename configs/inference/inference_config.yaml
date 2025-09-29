@@ -1,7 +1,7 @@
 # paths
-model_path: "checkpoints/l1-linres-FiLM/checkpoint_epoch_440.pt"
+model_path: "checkpoints/no-encoder/tbd"
 image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF160"
-save_path: "data/inference/l1_linres/"
+save_path: "data/inference/no-encoder/"
 
 target_step_deg: 0.2
 
