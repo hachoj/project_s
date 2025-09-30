@@ -4,6 +4,7 @@ import torch
 from torch import nn
 
 from .angle_embedding import FiLM
+from .registry import register_decoder
 
 
 class DenseLayer(nn.Module):
@@ -35,6 +36,7 @@ class RDB(nn.Module):
         return x + self.lff(self.layers(x))  # local residual learning
 
 
+@register_decoder("rdn")
 class RDN(nn.Module):
     def __init__(
         self,
@@ -42,7 +44,7 @@ class RDN(nn.Module):
         out_channels=128,
         num_features=64,
         growth_rate=64,
-        num_blocks=8,
+        num_res_blocks=8,
         num_layers=3,
         cond_dim=None,
         delta_max=2.0,
@@ -51,7 +53,7 @@ class RDN(nn.Module):
 
         self.G0 = num_features
         self.G = growth_rate
-        self.D = num_blocks
+        self.D = num_res_blocks
         self.C = num_layers
 
         if cond_dim is None:

@@ -1,23 +1,37 @@
-import math
 import torch
 import torch.nn as nn
 
-from .encoder import RDN as encoder
-from .decoder import RDN as decoder
-from .angle_embedding import get_time_embedding
+from .registry import build_decoder
+
+# Ensure decoder modules are registered on import
+from . import rdn_decoder  # noqa: F401
+from . import resunet_decoder  # noqa: F401
 
 
 class ProjectI(nn.Module):
     def __init__(
         self,
         embd_dim,
-        encoder_config,
         decoder_config,
+        linres,
     ):
         super().__init__()
         self.embd_dim = embd_dim
-        self.encoder = encoder(**encoder_config)
-        self.decoder = decoder(**decoder_config)
+        decoder_cfg = dict(decoder_config) if decoder_config is not None else {}
+
+        if "name" in decoder_cfg:
+            decoder_name = decoder_cfg.pop("name")
+            params = decoder_cfg.pop("params", None)
+            if params is not None:
+                decoder_params = dict(params)
+            else:
+                decoder_params = decoder_cfg
+        else:
+            decoder_name = "rdn"
+            decoder_params = decoder_cfg
+
+        self.decoder = build_decoder(decoder_name, **decoder_params)
+        self.linres = linres
 
     def forward(self, slices, r, delta, m):
         """
@@ -49,14 +63,13 @@ class ProjectI(nn.Module):
         delta = _prep(delta)
         m = _prep(m)
 
-        # Encode slices
-        x = slices.view(B * 2, 1, H, W)
-        feats = self.encoder(x)  # [B*2,C,H,W]
-        feats = feats.view(B, 2 * self.embd_dim, H, W)  # [B,2*C,H,W]
+        inp_slices = slices.view(B, 2, H, W)  # [B,2*C,H,W]
+        x = self.decoder(inp_slices, r, delta, m)  # [B,1,H,W]
+        out = x
 
-        r4 = r.view(-1, 1, 1, 1)
-        x_0 = torch.lerp(slices[:, 0:1], slices[:, 1:2], r4)
+        if self.linres:
+            r4 = r.view(-1, 1, 1, 1)
+            x_0 = torch.lerp(slices[:, 0:1], slices[:, 1:2], r4)
+            out = x + x_0
 
-        x = self.decoder(feats, r, delta, m)  # [B,1,H,W]
-
-        return x + x_0
+        return out
