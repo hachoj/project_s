@@ -398,9 +398,6 @@ def main() -> None:
     else:
         with open(args.decoder_config) as f:
             decoder_cfg = yaml.safe_load(f)
-                
-    with open("configs/model/encoder_config.yaml") as f:
-        encoder_cfg = yaml.safe_load(f)
 
     with open(args.inference_config) as f:
         inference_cfg = yaml.safe_load(f)
@@ -419,7 +416,6 @@ def main() -> None:
 
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
-        encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
         linres=model_cfg["linres"],
     ).to(device)

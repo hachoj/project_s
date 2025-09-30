@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 
 from .registry import build_decoder
-from .encoder import RDN
 
 # Ensure decoder modules are registered on import
 from . import rdn_decoder  # noqa: F401
@@ -13,7 +12,6 @@ class ProjectI(nn.Module):
     def __init__(
         self,
         embd_dim,
-        encoder_config,
         decoder_config,
         linres,
     ):
@@ -32,7 +30,6 @@ class ProjectI(nn.Module):
             decoder_name = "rdn"
             decoder_params = decoder_cfg
 
-        self.encoder = RDN(**encoder_config)
         self.decoder = build_decoder(decoder_name, **decoder_params)
         self.linres = linres
 
@@ -66,9 +63,7 @@ class ProjectI(nn.Module):
         delta = _prep(delta)
         m = _prep(m)
 
-        inp_slices = slices.view(B*2, 1, H, W)  # [B,2*C,H,W]
-        x = self.encoder(inp_slices)  # [B*2,embd_dim,H,W]
-        inp_slices = x.view(B, 2*self.embd_dim, H, W)  # [B,2*embd_dim,H,W]
+        inp_slices = slices.view(B, 2, H, W)  # [B,2*C,H,W]
         x = self.decoder(inp_slices, r, delta, m)  # [B,1,H,W]
         out = x
 

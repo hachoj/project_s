@@ -17,6 +17,7 @@ from model.utils import (
 from model.model import ProjectI
 from model.reconstruction import extract_slices, reconstruct_volume, save_volume
 
+EVERY_X_SLICES = 2
 
 if __name__ == "__main__":
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -29,13 +30,8 @@ if __name__ == "__main__":
     with open("configs/model/decoder_config.yaml") as f:
         decoder_cfg = yaml.safe_load(f)
 
-    with open("configs/model/encoder_config.yaml") as f:
-        encoder_cfg = yaml.safe_load(f)
-
     with open("configs/inference/inference_config.yaml") as f:
         inference_cfg = yaml.safe_load(f)
-
-    EVERY_X_SLICES = inference_cfg.get("every_x_slices", 1)
 
     # paths
     model_path = inference_cfg["model_path"]
@@ -58,7 +54,6 @@ if __name__ == "__main__":
 
     model = ProjectI(
         embd_dim=model_cfg["embd_dim"],
-        encoder_config=encoder_cfg,
         decoder_config=decoder_cfg,
         linres=model_cfg["linres"],
     ).to(device)
