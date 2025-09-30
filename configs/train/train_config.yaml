@@ -1,4 +1,4 @@
-checkpoint_save_dir: null
+checkpoint_save_dir: "checkpoints/rdn_resunet"
 model_resume_path: null
 dtype: "bfloat16"
 

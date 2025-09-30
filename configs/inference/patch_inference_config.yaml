@@ -1,8 +1,8 @@
 
 # paths
 model_path: "checkpoints/no-encoder/tbd"
-patch_path: "data/datasets/val/negative_UF160_patch_001.npz"
-output_prefix: "data/inference/patch/negative_UF160_patch_001"
+patch_path: "data/datasets/val/positive_UF179_patch_001.npz"
+output_prefix: "data/inference/patch/positive_UF179_patch_001"
 
 # reconstruction
 target_step_deg: 0.1

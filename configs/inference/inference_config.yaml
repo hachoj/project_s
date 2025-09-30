@@ -1,7 +1,7 @@
 # paths
-model_path: "checkpoints/no-encoder/tbd"
-image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF160"
-save_path: "data/inference/no-encoder/"
+model_path: "checkpoints/decoder-resunet-linres/checkpoint_epoch_220.pt"
+image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF179"
+save_path: "data/inference/resunet-nolinres/"
 
 target_step_deg: 0.2
 

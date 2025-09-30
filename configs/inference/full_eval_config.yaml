@@ -1,0 +1,26 @@
+# Optional settings for scripts/full_eval.py
+# All keys are optional; CLI flags override these values.
+
+# Remove every Nth slice during evaluation.
+every_x_slices: 2
+
+# Checkpoint to load for evaluation (overrides inference config if set).
+model_path: checkpoints/l1-linres-FiLM/checkpoint_epoch_400.pt
+
+# Explicit patient identifiers (label_case). If omitted, falls back to split_info list.
+patients:
+  - negative_UF197
+  - positive_UF160
+  - positive_UF179
+  - positive_UF050
+
+# Path to split_info.json containing val_patients (used when patients list empty).
+split_info: data/datasets/data_1.8_rev/split_info.json
+
+# Root directory containing label subfolders with raw DICOM series.
+image_root: ../project_n/data/Original_Data_in_DICOM_Format
+
+# Optional overrides
+# device: cuda
+# skip_compile: true
+save_path: data/inference/l1-linres-FiLM/

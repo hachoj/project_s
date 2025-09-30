@@ -18,7 +18,7 @@ if __name__ == "__main__":
     print(f"--------------------------------")
     print(f"Loading configs file...")
 
-    with open("configs/train/eval_config.yaml") as f:
+    with open("configs/inference/eval_config.yaml") as f:
         eval_cfg = yaml.safe_load(f)
 
     with open("configs/model/model_config.yaml") as f:
