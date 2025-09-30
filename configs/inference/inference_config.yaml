@@ -1,8 +1,9 @@
 # paths
-model_path: "checkpoints/decoder-resunet-linres/checkpoint_epoch_220.pt"
+model_path: "checkpoints/decoder-resunet-no-linres/checkpoint_epoch_220.pt"
 image_path: "../project_n/data/Original_Data_in_DICOM_Format/positive/UF179"
-save_path: "data/inference/resunet-nolinres/"
+save_path: "data/inference/resunet-nolinres/reconstruction/"
 
 target_step_deg: 0.2
+every_x_slices: 1
 
 just_sr: False

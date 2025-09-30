@@ -2,4 +2,4 @@ embd_dim: 128
 patch_size: [256, 256]
 stride: [192, 192]
 zero_one: False
-linres: True
+linres: False

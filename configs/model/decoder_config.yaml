@@ -1,19 +1,19 @@
-# name: resunet
-# params:
-#   in_channels: 2
-#   out_channels: 1
-#   base_channels: 64
-#   channel_multipliers: [1, 2, 4]
-#   num_res_blocks: 2
-#   cond_dim: 6
-#   delta_max: 1.8
-name: rdn
+name: resunet
 params:
-  in_channels: 256
+  in_channels: 2
   out_channels: 1
-  num_features: 128
-  growth_rate: 128
-  num_res_blocks: 8
-  num_layers: 3
+  base_channels: 64
+  channel_multipliers: [1, 2, 4]
+  num_res_blocks: 2
   cond_dim: 6
   delta_max: 1.8
+# name: rdn
+# params:
+#   in_channels: 256
+#   out_channels: 1
+#   num_features: 128
+#   growth_rate: 128
+#   num_res_blocks: 8
+#   num_layers: 3
+#   cond_dim: 6
+#   delta_max: 1.8
